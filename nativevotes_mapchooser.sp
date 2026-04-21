@@ -129,10 +129,14 @@ int g_winCount[MAX_TEAMS];
 
 #define VOTE_EXTEND 	"##extend##"
 #define VOTE_DONTCHANGE "##dontchange##"
+#define MAP_EVAL_CONFIG_FILE "configs/mapeval.cfg"
 
 // Libraries
 bool g_NativeVotes;
 bool g_RestInPawn;
+StringMap g_MapEvalGamemodes;
+char g_CurrentMap[PLATFORM_MAX_PATH];
+char g_GameMode[32];
 
 public void OnPluginStart()
 {
@@ -159,6 +163,7 @@ public void OnPluginStart()
 	g_NominateOwners = new ArrayList();
 	g_OldMapList = new ArrayList(arraySize);
 	g_NextMapList = new ArrayList(arraySize);
+	g_MapEvalGamemodes = new StringMap();
 
 	g_ConVars[mapvote_endvote] 		 		= CreateConVar("sm_mapvote_endvote", "1", "Specifies if MapChooser should run an end of map vote.", _, true, 0.0, true, 1.0);
 	g_ConVars[mapvote_start] 		 		= CreateConVar("sm_mapvote_start", "3.0", "Specifies when to start the vote based on time remaining.", _, true, 1.0);
@@ -304,6 +309,10 @@ public void OnLibraryRemoved(const char[] name)
 
 public void OnConfigsExecuted()
 {
+	LoadMapEvalConfig();
+	UpdateCurrentMap();
+	UpdateGameModeFromMap();
+
 	if (g_ConVars[workshop_cleanup].BoolValue)
 	{
 		CleanupWorkshopMaps();
@@ -1320,9 +1329,401 @@ bool RemoveStringFromArray(ArrayList array, char[] str)
 	return false;
 }
 
+void UpdateCurrentMap()
+{
+	g_CurrentMap[0] = '\0';
+	GetCurrentMap(g_CurrentMap, sizeof(g_CurrentMap));
+}
+
+void UpdateGameModeFromMap()
+{
+	g_GameMode[0] = '\0';
+
+	char mapName[PLATFORM_MAX_PATH];
+	strcopy(mapName, sizeof(mapName), g_CurrentMap);
+	ReplaceStringEx(mapName, sizeof(mapName), "workshop/", "");
+
+	if (StrContains(mapName, "koth_", false) == 0)
+	{
+		strcopy(g_GameMode, sizeof(g_GameMode), "koth");
+	}
+	else if (StrContains(mapName, "plr_", false) == 0 || StrContains(mapName, "pl_", false) == 0)
+	{
+		strcopy(g_GameMode, sizeof(g_GameMode), "pl");
+	}
+	else if (StrContains(mapName, "cp_", false) == 0)
+	{
+		strcopy(g_GameMode, sizeof(g_GameMode), "cp");
+	}
+	else if (StrContains(mapName, "ctf_", false) == 0)
+	{
+		strcopy(g_GameMode, sizeof(g_GameMode), "ctf");
+	}
+	else
+	{
+		strcopy(g_GameMode, sizeof(g_GameMode), "other");
+	}
+}
+
+void ClearMapEvalConfig()
+{
+	if (g_MapEvalGamemodes == null)
+	{
+		return;
+	}
+
+	StringMapSnapshot snapshot = g_MapEvalGamemodes.Snapshot();
+	char gamemode[64];
+
+	for (int i = 0; i < snapshot.Length; i++)
+	{
+		snapshot.GetKey(i, gamemode, sizeof(gamemode));
+
+		int tiersValue;
+		if (!g_MapEvalGamemodes.GetValue(gamemode, tiersValue))
+		{
+			continue;
+		}
+
+		StringMap tiers = view_as<StringMap>(tiersValue);
+		if (tiers == null)
+		{
+			continue;
+		}
+
+		StringMapSnapshot tierSnapshot = tiers.Snapshot();
+		char tierName[64];
+		for (int t = 0; t < tierSnapshot.Length; t++)
+		{
+			tierSnapshot.GetKey(t, tierName, sizeof(tierName));
+
+			int mapsValue;
+			if (!tiers.GetValue(tierName, mapsValue))
+			{
+				continue;
+			}
+
+			ArrayList maps = view_as<ArrayList>(mapsValue);
+			if (maps != null)
+			{
+				delete maps;
+			}
+		}
+
+		delete tierSnapshot;
+		delete tiers;
+	}
+
+	delete snapshot;
+	g_MapEvalGamemodes.Clear();
+}
+
+void LoadMapEvalConfig()
+{
+	if (g_MapEvalGamemodes == null)
+	{
+		g_MapEvalGamemodes = new StringMap();
+	}
+
+	ClearMapEvalConfig();
+
+	char path[PLATFORM_MAX_PATH];
+	BuildPath(Path_SM, path, sizeof(path), MAP_EVAL_CONFIG_FILE);
+
+	if (!FileExists(path))
+	{
+		LogMessage("[NativeVotes MapChooser] mapeval config missing, falling back to map list: %s", path);
+		return;
+	}
+
+	KeyValues kv = new KeyValues("mapEval");
+	if (!kv.ImportFromFile(path))
+	{
+		LogError("[NativeVotes MapChooser] Failed to parse mapeval config: %s", path);
+		delete kv;
+		return;
+	}
+
+	if (!kv.GotoFirstSubKey())
+	{
+		delete kv;
+		return;
+	}
+
+	do
+	{
+		char gamemode[64];
+		kv.GetSectionName(gamemode, sizeof(gamemode));
+		if (!gamemode[0])
+		{
+			continue;
+		}
+
+		StringMap tiers = new StringMap();
+
+		if (kv.GotoFirstSubKey(false))
+		{
+			do
+			{
+				char tierName[64];
+				kv.GetSectionName(tierName, sizeof(tierName));
+				if (!tierName[0])
+				{
+					continue;
+				}
+
+				ArrayList maps = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
+
+				if (kv.GotoFirstSubKey(false))
+				{
+					do
+					{
+						char mapName[PLATFORM_MAX_PATH];
+						kv.GetSectionName(mapName, sizeof(mapName));
+						if (mapName[0])
+						{
+							maps.PushString(mapName);
+						}
+					}
+					while (kv.GotoNextKey(false));
+
+					kv.GoBack();
+				}
+
+				tiers.SetValue(tierName, view_as<int>(maps));
+			}
+			while (kv.GotoNextKey(false));
+
+			kv.GoBack();
+		}
+
+		g_MapEvalGamemodes.SetValue(gamemode, view_as<int>(tiers));
+	}
+	while (kv.GotoNextKey());
+
+	delete kv;
+}
+
+bool IsMapEvalExcludedByHistory(const char[] mapName)
+{
+	if (g_ConVars[mapvote_exclude].IntValue <= 0)
+	{
+		return false;
+	}
+
+	return (g_OldMapList.FindString(mapName) != -1);
+}
+
+void BuildMapEvalTierPool(StringMap tiers, const char[] tierName, ArrayList pool, StringMap seen)
+{
+	if (tiers == null || pool == null || !tierName[0])
+	{
+		return;
+	}
+
+	int mapsValue;
+	if (!tiers.GetValue(tierName, mapsValue))
+	{
+		return;
+	}
+
+	ArrayList maps = view_as<ArrayList>(mapsValue);
+	if (maps == null)
+	{
+		return;
+	}
+
+	char mapName[PLATFORM_MAX_PATH];
+	for (int i = 0; i < maps.Length; i++)
+	{
+		maps.GetString(i, mapName, sizeof(mapName));
+		TrimString(mapName);
+
+		if (!mapName[0])
+		{
+			continue;
+		}
+		if (g_CurrentMap[0] && StrEqual(mapName, g_CurrentMap, false))
+		{
+			continue;
+		}
+		if (IsMapEvalExcludedByHistory(mapName))
+		{
+			continue;
+		}
+		if (!IsMapValid(mapName))
+		{
+			continue;
+		}
+		if (seen != null)
+		{
+			int dummy;
+			if (seen.GetValue(mapName, dummy))
+			{
+				continue;
+			}
+			seen.SetValue(mapName, 1);
+		}
+
+		pool.PushString(mapName);
+	}
+}
+
+void AddMapEvalVoteGroup(const char[] gamemode, ArrayList groupNames, ArrayList tier1Pools, ArrayList tier2Pools, StringMap seen)
+{
+	if (!gamemode[0] || g_MapEvalGamemodes == null)
+	{
+		return;
+	}
+
+	int tiersValue;
+	if (!g_MapEvalGamemodes.GetValue(gamemode, tiersValue))
+	{
+		return;
+	}
+
+	StringMap tiers = view_as<StringMap>(tiersValue);
+	if (tiers == null)
+	{
+		return;
+	}
+
+	ArrayList tier1Pool = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
+	ArrayList tier2Pool = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
+
+	BuildMapEvalTierPool(tiers, "tier1", tier1Pool, seen);
+	BuildMapEvalTierPool(tiers, "tier2", tier2Pool, seen);
+
+	if (tier1Pool.Length == 0 && tier2Pool.Length == 0)
+	{
+		delete tier1Pool;
+		delete tier2Pool;
+		return;
+	}
+
+	groupNames.PushString(gamemode);
+	tier1Pools.Push(view_as<int>(tier1Pool));
+	tier2Pools.Push(view_as<int>(tier2Pool));
+}
+
+bool PopulateNextVoteFromMapEval()
+{
+	if (g_MapEvalGamemodes == null || g_MapEvalGamemodes.Size == 0)
+	{
+		return false;
+	}
+
+	UpdateCurrentMap();
+	UpdateGameModeFromMap();
+
+	ArrayList groupNames = new ArrayList(ByteCountToCells(64));
+	ArrayList tier1Pools = new ArrayList();
+	ArrayList tier2Pools = new ArrayList();
+	StringMap seen = new StringMap();
+
+	if (g_GameMode[0])
+	{
+		AddMapEvalVoteGroup(g_GameMode, groupNames, tier1Pools, tier2Pools, seen);
+	}
+
+	StringMapSnapshot snapshot = g_MapEvalGamemodes.Snapshot();
+	char gamemode[64];
+	for (int i = 0; i < snapshot.Length; i++)
+	{
+		snapshot.GetKey(i, gamemode, sizeof(gamemode));
+		if (g_GameMode[0] && StrEqual(gamemode, g_GameMode, false))
+		{
+			continue;
+		}
+
+		AddMapEvalVoteGroup(gamemode, groupNames, tier1Pools, tier2Pools, seen);
+	}
+	delete snapshot;
+	delete seen;
+
+	char mapName[PLATFORM_MAX_PATH];
+	int limit = g_ConVars[mapvote_include].IntValue;
+	while (groupNames.Length > 0 && g_NextMapList.Length < limit)
+	{
+		int groupIndex = GetRandomInt(0, groupNames.Length - 1);
+		ArrayList tier1Pool = view_as<ArrayList>(tier1Pools.Get(groupIndex));
+		ArrayList tier2Pool = view_as<ArrayList>(tier2Pools.Get(groupIndex));
+		ArrayList pool = null;
+
+		bool preferTier1 = (GetRandomInt(1, 100) <= 60);
+		if (preferTier1)
+		{
+			if (tier1Pool != null && tier1Pool.Length > 0)
+			{
+				pool = tier1Pool;
+			}
+			else if (tier2Pool != null && tier2Pool.Length > 0)
+			{
+				pool = tier2Pool;
+			}
+		}
+		else
+		{
+			if (tier2Pool != null && tier2Pool.Length > 0)
+			{
+				pool = tier2Pool;
+			}
+			else if (tier1Pool != null && tier1Pool.Length > 0)
+			{
+				pool = tier1Pool;
+			}
+		}
+
+		if (pool != null && pool.Length > 0)
+		{
+			int mapIndex = GetRandomInt(0, pool.Length - 1);
+			pool.GetString(mapIndex, mapName, sizeof(mapName));
+			g_NextMapList.PushString(mapName);
+		}
+
+		if (tier1Pool != null)
+		{
+			delete tier1Pool;
+		}
+		if (tier2Pool != null)
+		{
+			delete tier2Pool;
+		}
+
+		groupNames.Erase(groupIndex);
+		tier1Pools.Erase(groupIndex);
+		tier2Pools.Erase(groupIndex);
+	}
+
+	for (int i = 0; i < tier1Pools.Length; i++)
+	{
+		ArrayList tier1Pool = view_as<ArrayList>(tier1Pools.Get(i));
+		ArrayList tier2Pool = view_as<ArrayList>(tier2Pools.Get(i));
+		if (tier1Pool != null)
+		{
+			delete tier1Pool;
+		}
+		if (tier2Pool != null)
+		{
+			delete tier2Pool;
+		}
+	}
+
+	delete groupNames;
+	delete tier1Pools;
+	delete tier2Pools;
+
+	return (g_NextMapList.Length > 0);
+}
+
 void CreateNextVote()
 {
 	g_NextMapList.Clear();
+
+	if (PopulateNextVoteFromMapEval())
+	{
+		return;
+	}
 	
 	char map[PLATFORM_MAX_PATH];
 	// tempMaps is a resolved map list
