@@ -66,6 +66,7 @@ enum
 	excludecurrent,
 	maxmatches,
 	allow_workshop,
+	adminonly,
 
 	nextlevel_allowed,
 
@@ -109,6 +110,7 @@ public void OnPluginStart()
 	g_ConVars[excludecurrent] 	 = CreateConVar("sm_nominate_excludecurrent", "1", "Specifies if the MapChooser excluded maps should also be excluded from Nominations", _, true, 0.0, true, 1.0);
 	g_ConVars[maxmatches] 	  	 = CreateConVar("sm_nominate_maxfound", "0", "Maximum number of nomination matches to add to the menu. 0 = infinite.", _, true, 0.0);
 	//g_ConVars[allow_workshop]  = CreateConVar("sm_nominate_allow_workshop", "0", "Specifies if unlisted workshop maps can be nominated", _, true, 0.0, true, 1.0);
+	g_ConVars[adminonly] 		 = CreateConVar("sm_nominate_adminonly", "0", "Specifies whether only admins can use nomination commands.", _, true, 0.0, true, 1.0);
 
 	g_ConVars[nextlevel_allowed] = FindConVar("sv_vote_issue_nextlevel_allowed");
 
@@ -302,10 +304,26 @@ public void OnClientSayCommand_Post(int client, const char[] command, const char
 	}
 }
 
+bool CanUseNominationCommands(int client)
+{
+	if (!g_ConVars[adminonly].BoolValue)
+	{
+		return true;
+	}
+
+	return CheckCommandAccess(client, "sm_nominate_adminonly", ADMFLAG_GENERIC);
+}
+
 public Action Command_Nominate(int client, int args)
 {
 	if (!client)
 	{
+		return Plugin_Handled;
+	}
+
+	if (!CanUseNominationCommands(client))
+	{
+		CReplyToCommand(client, "[{lightgreen}Nominations\x01] Only admins can nominate maps.");
 		return Plugin_Handled;
 	}
 	
