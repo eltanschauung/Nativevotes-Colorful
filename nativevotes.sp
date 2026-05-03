@@ -38,6 +38,7 @@
 
 #pragma semicolon 1
 #pragma newdecls required
+#pragma dynamic 65536
 
 #include <nativevotes>
 #include <implodeexplode>
@@ -349,13 +350,14 @@ public void ProcessMapList()
 	g_MapOverrides = overrideList;
 	
 	int maxLength = GetStringMapImplodeSize(overrideList, 1, ImplodePart_Key);
+	int bufferLength = maxLength + 1;
 		
-	char[] newMapData = new char[maxLength];
-	int newLength = ImplodeStringMapToString(overrideList, "\n", newMapData, maxLength, ImplodePart_Key);
-	if (newLength < maxLength && newMapData[newLength] != '\n')
+	char[] newMapData = new char[bufferLength];
+	int newLength = ImplodeStringMapToString(overrideList, "\n", newMapData, bufferLength, ImplodePart_Key);
+	if (newLength < bufferLength - 1 && newMapData[newLength] != '\n')
 	{
 		// do this to avoid a StrCat
-		newLength += strcopy(newMapData[newLength], maxLength, "\n") + 1;
+		newLength += strcopy(newMapData[newLength], bufferLength - newLength, "\n") + 1;
 	}
 	
 	SetStringTableData(stringTableIndex, stringIndex, newMapData, newLength);
