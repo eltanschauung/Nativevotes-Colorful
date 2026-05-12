@@ -43,6 +43,9 @@
 #include <nativevotes>
 #include <implodeexplode>
 
+native bool WhaleTracker_AreStatsLoaded(int client);
+native bool WhaleTracker_HasPlaytimeHours(int client, int hours);
+
 EngineVersion g_EngineVersion = Engine_Unknown;
 
 #include "nativevotes/data-keyvalues.sp"
@@ -86,6 +89,8 @@ enum
 	progress_console,
 	progress_client_console,
 	vote_delay,
+	mapvote_debug_logging,
+	mapvote_min_playtime_hours,
 
 	MAX_CONVARS
 };
@@ -116,7 +121,10 @@ float g_fStartTime;
 int g_TimeLeft;
 int g_ClientVotes[MAXPLAYERS+1];
 bool g_bRevoting[MAXPLAYERS+1];
+bool g_ClientVoteCounted[MAXPLAYERS+1];
 char g_LeaderList[1024];
+int g_UncountedMapVotes;
+bool g_MapVoteFailOpenUnavailableLogged;
 
 ConVar sv_vote_holder_may_vote_no;
 
@@ -242,6 +250,9 @@ public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max
 	CreateNative("NativeVote.Team.get", Native_GetTeam);
 	CreateNative("NativeVote.Initiator.set", Native_SetInitiator);
 	CreateNative("NativeVote.Initiator.get", Native_GetInitiator);
+
+	MarkNativeAsOptional("WhaleTracker_AreStatsLoaded");
+	MarkNativeAsOptional("WhaleTracker_HasPlaytimeHours");
 	
 	RegPluginLibrary("nativevotes");
 	
@@ -258,6 +269,8 @@ public void OnPluginStart()
 	g_ConVars[progress_console]  	   = CreateConVar("nativevotes_progress_console", "0", "Show current vote progress as console messages", FCVAR_NONE, true, 0.0, true, 1.0);
 	g_ConVars[progress_client_console] = CreateConVar("nativevotes_progress_client_console", "0", "Show current vote progress as console messages to clients", FCVAR_NONE, true, 0.0, true, 1.0);
 	g_ConVars[vote_delay] 		 	   = CreateConVar("nativevotes_vote_delay", "30", "Sets the recommended time in between public votes", FCVAR_NONE, true, 0.0);
+	g_ConVars[mapvote_debug_logging]  = CreateConVar("nativevotes_mapvote_debug_logging", "1", "Log per-client TF2 map vote option/start/count diagnostics", FCVAR_NONE, true, 0.0, true, 1.0);
+	g_ConVars[mapvote_min_playtime_hours] = CreateConVar("nativevotes_mapvote_min_playtime_hours", "0", "Minimum Whaletracker playtime hours required for TF2 map votes to count. 0 disables the gate.", FCVAR_NONE, true, 0.0);
 	g_ConVars[vote_delay].AddChangeHook(OnVoteDelayChange);
 
 	Game_InitializeCvars();
@@ -717,11 +730,26 @@ void OnVoteSelect(NativeVote vote, int client, int item)
 		{
 			Game_ClientSelectedItem(vote, client, item);
 			
+			bool counted = ShouldCountClientVote(vote, client);
 			g_ClientVotes[client] = item;
-			g_hVotes.Set(item, g_hVotes.Get(item) + 1);
-			g_NumVotes++;
+			g_ClientVoteCounted[client] = counted;
 
-			Game_UpdateVoteCounts(g_hVotes, g_TotalClients);
+			if (counted)
+			{
+				g_hVotes.Set(item, g_hVotes.Get(item) + 1);
+				g_NumVotes++;
+				Game_UpdateVoteCounts(g_hVotes, g_TotalClients);
+			}
+			else
+			{
+				g_UncountedMapVotes++;
+				LogMapVoteCountSuppressed(vote, client, item);
+			}
+
+			if (ShouldLogMapVoteDebug(vote))
+			{
+				LogMessage("[NativeVotes MapVote Debug] choice received: client=%N(%d) item=%d counted=%d counted_votes=%d potential_clients=%d", client, client, item, counted, g_NumVotes, g_TotalClients);
+			}
 			
 			if (g_ConVars[progress_chat].BoolValue || g_ConVars[progress_console].BoolValue || g_ConVars[progress_client_console].BoolValue)
 			{
@@ -1089,6 +1117,135 @@ void DecrementPlayerCount()
 }
 
 
+bool IsMapChoiceVote(NativeVote vote)
+{
+	return vote != null && Data_GetType(vote) == NativeVotesType_NextLevelMult;
+}
+
+bool ShouldLogMapVoteDebug(NativeVote vote)
+{
+	return IsMapChoiceVote(vote) && g_ConVars[mapvote_debug_logging] != null && g_ConVars[mapvote_debug_logging].BoolValue;
+}
+
+int GetMapVotePlaytimeHours()
+{
+	if (g_ConVars[mapvote_min_playtime_hours] == null)
+	{
+		return 0;
+	}
+
+	return g_ConVars[mapvote_min_playtime_hours].IntValue;
+}
+
+bool IsWhaleTrackerPlaytimeGateAvailable()
+{
+	return LibraryExists("whaletracker") && GetFeatureStatus(FeatureType_Native, "WhaleTracker_HasPlaytimeHours") == FeatureStatus_Available;
+}
+
+bool AreWhaleTrackerStatsAvailableForClient(int client)
+{
+	if (GetFeatureStatus(FeatureType_Native, "WhaleTracker_AreStatsLoaded") != FeatureStatus_Available)
+	{
+		return true;
+	}
+
+	return WhaleTracker_AreStatsLoaded(client);
+}
+
+bool ShouldCountClientVote(NativeVote vote, int client)
+{
+	int requiredHours = GetMapVotePlaytimeHours();
+	if (!IsMapChoiceVote(vote) || requiredHours <= 0)
+	{
+		return true;
+	}
+
+	if (!IsWhaleTrackerPlaytimeGateAvailable())
+	{
+		if (ShouldLogMapVoteDebug(vote) && !g_MapVoteFailOpenUnavailableLogged)
+		{
+			LogMessage("[NativeVotes MapVote Debug] playtime gate fail-open: Whaletracker library/native unavailable; map votes will count for all clients this vote.");
+			g_MapVoteFailOpenUnavailableLogged = true;
+		}
+		return true;
+	}
+
+	if (!AreWhaleTrackerStatsAvailableForClient(client))
+	{
+		if (ShouldLogMapVoteDebug(vote))
+		{
+			LogMessage("[NativeVotes MapVote Debug] playtime gate fail-open: stats unavailable for client=%N(%d); vote will count.", client, client);
+		}
+		return true;
+	}
+
+	return WhaleTracker_HasPlaytimeHours(client, requiredHours);
+}
+
+void LogMapVoteCountSuppressed(NativeVote vote, int client, int item)
+{
+	if (!ShouldLogMapVoteDebug(vote))
+	{
+		return;
+	}
+
+	char choice[128];
+	Data_GetItemDisplay(vote, item, choice, sizeof(choice));
+	LogMessage("[NativeVotes MapVote Debug] playtime gate suppressed counted vote: client=%N(%d) item=%d choice=\"%s\" required_hours=%d", client, client, item, choice, GetMapVotePlaytimeHours());
+}
+
+void LogMapVoteOptionsToClient(NativeVote vote, int client, int itemCount, const char[] optionsSummary)
+{
+	if (!ShouldLogMapVoteDebug(vote))
+	{
+		return;
+	}
+
+	LogMessage("[NativeVotes MapVote Debug] vote_options sent: client=%N(%d) voteidx=%d item_count=%d options=\"%s\"", client, client, Game_GetNativeVoteIndex(), itemCount, optionsSummary);
+}
+
+void LogMapVoteStartToClient(NativeVote vote, int client, int itemCount, bool yesNo, const char[] translation, const char[] details)
+{
+	if (!ShouldLogMapVoteDebug(vote))
+	{
+		return;
+	}
+
+	LogMessage("[NativeVotes MapVote Debug] VoteStart sent: client=%N(%d) voteidx=%d item_count=%d yes_no=%d translation=\"%s\" details=\"%s\"", client, client, Game_GetNativeVoteIndex(), itemCount, yesNo, translation, details);
+}
+
+void LogMapVoteEndSummary(NativeVote vote, int numVotes, int numItems)
+{
+	if (!ShouldLogMapVoteDebug(vote))
+	{
+		return;
+	}
+
+	int countedClients;
+	int uncountedClients;
+	int pendingClients;
+	for (int i = 1; i <= MaxClients; i++)
+	{
+		if (g_ClientVotes[i] == VOTE_PENDING)
+		{
+			pendingClients++;
+		}
+		else if (g_ClientVotes[i] > VOTE_PENDING)
+		{
+			if (g_ClientVoteCounted[i])
+			{
+				countedClients++;
+			}
+			else
+			{
+				uncountedClients++;
+			}
+		}
+	}
+
+	LogMessage("[NativeVotes MapVote Debug] ending vote: voteidx=%d counted_votes=%d counted_clients=%d uncounted_clients=%d uncounted_choices=%d pending_clients=%d potential_clients=%d result_items=%d", Game_GetNativeVoteIndex(), numVotes, countedClients, uncountedClients, g_UncountedMapVotes, pendingClients, g_TotalClients, numItems);
+}
+
 void EndVoting()
 {
 	int voteDelay = g_ConVars[vote_delay].IntValue;
@@ -1124,6 +1281,7 @@ void EndVoting()
 	int[][] votes = new int[slots][2];
 	int num_votes;
 	int num_items = Internal_GetResults(votes, num_votes);
+	LogMapVoteEndSummary(g_hCurVote, num_votes, num_items);
 	
 	if (!num_votes)
 	{
@@ -1252,6 +1410,7 @@ bool InitializeVoting(NativeVote vote, int time, int flags)
 	{
 		g_ClientVotes[i] = VOTE_NOT_VOTING;
 		g_bRevoting[i] = false;
+		g_ClientVoteCounted[i] = false;
 	}
 	
 	g_Items = Data_GetItemCount(vote);
@@ -1262,6 +1421,8 @@ bool InitializeVoting(NativeVote vote, int time, int flags)
 		g_hVotes.Set(i, 0);
 	}
 	
+	g_UncountedMapVotes = 0;
+	g_MapVoteFailOpenUnavailableLogged = false;
 	g_hCurVote = vote;
 	g_VoteTime = time;
 	g_VoteFlags = flags;
@@ -1453,11 +1614,15 @@ bool Internal_RedrawToClient(int client, bool revotes)
 		}
 		
 		g_Clients++;
-		SetArrayCell(g_hVotes, g_ClientVotes[client], GetArrayCell(g_hVotes, g_ClientVotes[client]) - 1);
+		if (g_ClientVoteCounted[client])
+		{
+			SetArrayCell(g_hVotes, g_ClientVotes[client], GetArrayCell(g_hVotes, g_ClientVotes[client]) - 1);
+			g_NumVotes--;
+			Game_UpdateVoteCounts(g_hVotes, g_TotalClients);
+		}
 		g_ClientVotes[client] = VOTE_PENDING;
+		g_ClientVoteCounted[client] = false;
 		g_bRevoting[client] = true;
-		g_NumVotes--;
-		Game_UpdateVoteCounts(g_hVotes, g_TotalClients);
 	}
 	
 	// Display the vote fail screen for a few seconds

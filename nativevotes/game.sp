@@ -385,6 +385,11 @@ static ConVar g_Cvar_ChangeCivilian_Enabled;
  */
 static int s_nNativeVoteIdx = 0;
 
+int Game_GetNativeVoteIndex()
+{
+	return s_nNativeVoteIdx;
+}
+
 bool Game_IsGameSupported(char[] engineName="", int maxlength=0)
 {
 	g_EngineVersion = GetEngineVersion();
@@ -2295,6 +2300,8 @@ static void TF2CSGO_DisplayVote(NativeVote vote, int[] clients, int num_clients)
 		}
 		
 		g_curDisplayClient = 0;
+		char sentDetails[TRANSLATION_LENGTH];
+		strcopy(sentDetails, sizeof(sentDetails), details);
 
 		if (!bYesNo)
 		{
@@ -2312,10 +2319,12 @@ static void TF2CSGO_DisplayVote(NativeVote vote, int[] clients, int num_clients)
 			if (bCustom && changeTitle == Plugin_Changed)
 			{
 				protoStart.SetString("details_str", g_newMenuTitle);
+				strcopy(sentDetails, sizeof(sentDetails), g_newMenuTitle);
 			}
 			else
 			{
 				protoStart.SetString("details_str", details);
+				strcopy(sentDetails, sizeof(sentDetails), details);
 			}
 			protoStart.SetBool("is_yes_no_vote", bYesNo);
 			protoStart.SetString("other_team_str", otherTeamString);
@@ -2331,10 +2340,12 @@ static void TF2CSGO_DisplayVote(NativeVote vote, int[] clients, int num_clients)
 			if (bCustom && changeTitle == Plugin_Changed)
 			{
 				bfStart.WriteString(g_newMenuTitle);
+				strcopy(sentDetails, sizeof(sentDetails), g_newMenuTitle);
 			}
 			else
 			{
 				bfStart.WriteString(details);
+				strcopy(sentDetails, sizeof(sentDetails), details);
 			}
 			bfStart.WriteByte(bYesNo);
 			if (!IsFakeClient(clients[i]))
@@ -2344,6 +2355,8 @@ static void TF2CSGO_DisplayVote(NativeVote vote, int[] clients, int num_clients)
 		}
 		
 		EndMessage();
+
+		LogMapVoteStartToClient(vote, clients[i], Data_GetItemCount(vote), bYesNo, translation, sentDetails);
 	}
 
 	g_curDisplayClient = 0;
@@ -2352,6 +2365,8 @@ static void TF2CSGO_DisplayVote(NativeVote vote, int[] clients, int num_clients)
 static void TF2CSGO_SendOptionsToClient(NativeVote vote, int client)
 {
 	Event optionsEvent = CreateEvent("vote_options");
+	char optionsSummary[512];
+	optionsSummary[0] = '\0';
 	
 	MenuAction actions = Data_GetActions(vote);
 	bool bNoVoteButton = (Data_GetFlags(vote) & MENUFLAG_BUTTON_NOVOTE) == MENUFLAG_BUTTON_NOVOTE;
@@ -2367,6 +2382,13 @@ static void TF2CSGO_SendOptionsToClient(NativeVote vote, int client)
 		char display[TRANSLATION_LENGTH];
 		Format(display, sizeof(display), "%T", "No Vote", client);
 		optionsEvent.SetString(option, display);
+
+		if (ShouldLogMapVoteDebug(vote))
+		{
+			char optionLog[TRANSLATION_LENGTH + 16];
+			Format(optionLog, sizeof(optionLog), "1=%s", display);
+			StrCat(optionsSummary, sizeof(optionsSummary), optionLog);
+		}
 	}
 	
 	int itemCount = Data_GetItemCount(vote);
@@ -2397,10 +2419,23 @@ static void TF2CSGO_SendOptionsToClient(NativeVote vote, int client)
 			Data_GetItemDisplay(vote, i, display, sizeof(display));
 		}
 		optionsEvent.SetString(option, display);
+
+		if (ShouldLogMapVoteDebug(vote))
+		{
+			if (optionsSummary[0] != '\0')
+			{
+				StrCat(optionsSummary, sizeof(optionsSummary), " | ");
+			}
+
+			char optionLog[TRANSLATION_LENGTH + 16];
+			Format(optionLog, sizeof(optionLog), "%d=%s", i + 1, display);
+			StrCat(optionsSummary, sizeof(optionsSummary), optionLog);
+		}
 	}
 	optionsEvent.SetInt("count", itemCount);
 	optionsEvent.SetInt("voteidx", s_nNativeVoteIdx);
 	optionsEvent.FireToClient(client);
+	LogMapVoteOptionsToClient(vote, client, itemCount, optionsSummary);
 	// FireToClient does not close the handle, so we call Cancel() to do that for us.
 	optionsEvent.Cancel();
 }
