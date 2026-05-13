@@ -48,6 +48,8 @@
 #define REQUIRE_EXTENSIONS
 
 native int Filters_GetChatName(int client, char[] buffer, int maxlen);
+native bool WhaleTracker_AreStatsLoaded(int client);
+native bool WhaleTracker_HasPlaytimeHours(int client, int hours);
 
 #pragma semicolon 1
 #pragma newdecls required
@@ -64,6 +66,8 @@ public Plugin myinfo =
 public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max)
 {
 	MarkNativeAsOptional("Filters_GetChatName");
+	MarkNativeAsOptional("WhaleTracker_AreStatsLoaded");
+	MarkNativeAsOptional("WhaleTracker_HasPlaytimeHours");
 	return APLRes_Success;
 }
 
@@ -80,9 +84,10 @@ enum
 }
 
 ConVar g_ConVars[MAX_CONVARS];
+ConVar g_MapVoteMinPlaytimeHours = null;
 
 bool g_RTVAllowed = false;					// True if RTV is available to players. Used to delay rtv votes.
-int g_Voters = 0;							// Total voters connected. Doesn't include fake clients.
+int g_Voters = 0;							// Total RTV-eligible voters connected. Doesn't include fake clients.
 int g_Votes = 0;							// Total number of "say rtv" votes
 int g_VotesNeeded = 0;						// Necessary votes before map vote begins. (voters * percent_needed)
 bool g_Voted[MAXPLAYERS+1] = {false, ...};
@@ -106,6 +111,7 @@ public void OnPluginStart()
 	g_ConVars[interval] 	  = CreateConVar("sm_rtv_interval", "240.0", "Time (in seconds) after a failed RTV before another can be held", 0, true, 0.00);
 	g_ConVars[changetime] 	  = CreateConVar("sm_rtv_changetime", "0", "When to change the map after a succesful RTV: 0 - Instant, 1 - RoundEnd, 2 - MapEnd", _, true, 0.0, true, 2.0);
 	g_ConVars[postvoteaction] = CreateConVar("sm_rtv_postvoteaction", "0", "What to do with RTV's after a mapvote has completed. 0 - Allow, success = instant change, 1 - Deny", _, true, 0.0, true, 1.0);
+	g_MapVoteMinPlaytimeHours = FindConVar("nativevotes_mapvote_min_playtime_hours");
 	
 	RegConsoleCmd("sm_rtv", Command_RTV);
 	RegConsoleCmd("sm_rockthevote", Command_RTV);
@@ -198,7 +204,9 @@ public void OnMapEnd()
 }
 
 public void OnConfigsExecuted()
-{	
+{
+	RecalculateRTVVoters();
+
 	if (g_ConVars[initialdelay].FloatValue <= 0.0)
 	{
 		g_RTVAllowed = true;
@@ -209,26 +217,13 @@ public void OnConfigsExecuted()
 
 public void OnClientConnected(int client)
 {
-	if (!IsFakeClient(client))
-	{
-		g_Voters++;
-		g_VotesNeeded = RoundToCeil(float(g_Voters) * g_ConVars[needed].FloatValue);
-	}
+	RecalculateRTVVoters();
 }
 
 public void OnClientDisconnect(int client)
 {	
-	if (g_Voted[client])
-	{
-		g_Votes--;
-		g_Voted[client] = false;
-	}
-	
-	if (!IsFakeClient(client))
-	{
-		g_Voters--;
-		g_VotesNeeded = RoundToCeil(float(g_Voters) * g_ConVars[needed].FloatValue);
-	}
+	g_Voted[client] = false;
+	RecalculateRTVVoters(client);
 	
 	if (g_Votes && 
 		g_Voters && 
@@ -317,6 +312,8 @@ public Action Command_ResetRTV(int client, int args)
 
 void AttemptUnRTV(int client)
 {
+	RecalculateRTVVoters();
+
 	if (!g_RTVAllowed || (g_ConVars[postvoteaction].IntValue == 1 && HasEndOfMapVoteFinished()))
 	{
 		CReplyToCommand(client, "[{lightgreen}Rock The Vote\x01] %t", "RTV Not Allowed");
@@ -373,8 +370,20 @@ void AttemptRTV(int client, bool isVoteMenu=false)
 		CReplyToCommand(client, "[{lightgreen}Rock The Vote\x01] %t", "RTV Started");
 		return;
 	}
+
+	RecalculateRTVVoters();
+
+	if (!IsRTVEligibleClient(client))
+	{
+		CReplyToCommand(client, "[{lightgreen}Rock The Vote\x01] You need a higher playtime on this server to rock the vote");
+		if (isVoteMenu && g_NativeVotes)
+		{
+			NativeVotes_DisplayCallVoteFail(client, NativeVotesCallFail_Generic);
+		}
+		return;
+	}
 	
-	if (GetClientCount(true) < g_ConVars[minplayers].IntValue)
+	if (g_Voters < g_ConVars[minplayers].IntValue)
 	{
 		CReplyToCommand(client, "[{lightgreen}Rock The Vote\x01] %t", "Minimal Players Not Met");
 		if (isVoteMenu && g_NativeVotes)
@@ -406,9 +415,104 @@ void AttemptRTV(int client, bool isVoteMenu=false)
 
 public Action Timer_DelayRTV(Handle timer)
 {
+	RecalculateRTVVoters();
 	g_RTVAllowed = true;
 
 	return Plugin_Continue;
+}
+
+int GetRTVMinPlaytimeHours()
+{
+	if (g_MapVoteMinPlaytimeHours == null)
+	{
+		g_MapVoteMinPlaytimeHours = FindConVar("nativevotes_mapvote_min_playtime_hours");
+	}
+
+	if (g_MapVoteMinPlaytimeHours == null)
+	{
+		return 0;
+	}
+
+	return g_MapVoteMinPlaytimeHours.IntValue;
+}
+
+bool IsWhaleTrackerPlaytimeGateAvailable()
+{
+	return LibraryExists("whaletracker")
+		&& GetFeatureStatus(FeatureType_Native, "WhaleTracker_HasPlaytimeHours") == FeatureStatus_Available;
+}
+
+bool AreWhaleTrackerStatsAvailableForClient(int client)
+{
+	if (GetFeatureStatus(FeatureType_Native, "WhaleTracker_AreStatsLoaded") != FeatureStatus_Available)
+	{
+		return true;
+	}
+
+	return WhaleTracker_AreStatsLoaded(client);
+}
+
+bool IsRTVEligibleClient(int client)
+{
+	if (client <= 0 || client > MaxClients || !IsClientConnected(client) || IsFakeClient(client))
+	{
+		return false;
+	}
+
+	int requiredHours = GetRTVMinPlaytimeHours();
+	if (requiredHours <= 0)
+	{
+		return true;
+	}
+
+	if (!IsWhaleTrackerPlaytimeGateAvailable())
+	{
+		return true;
+	}
+
+	if (!AreWhaleTrackerStatsAvailableForClient(client))
+	{
+		return false;
+	}
+
+	return WhaleTracker_HasPlaytimeHours(client, requiredHours);
+}
+
+void RecalculateRTVVoters(int excludedClient = 0)
+{
+	int voters = 0;
+	int votes = 0;
+
+	for (int client = 1; client <= MaxClients; client++)
+	{
+		if (client == excludedClient)
+		{
+			g_Voted[client] = false;
+			continue;
+		}
+
+		if (!IsClientConnected(client) || IsFakeClient(client))
+		{
+			g_Voted[client] = false;
+			continue;
+		}
+
+		if (!IsRTVEligibleClient(client))
+		{
+			g_Voted[client] = false;
+			continue;
+		}
+
+		voters++;
+		if (g_Voted[client])
+		{
+			votes++;
+		}
+	}
+
+	g_Voters = voters;
+	g_Votes = votes;
+	g_VotesNeeded = RoundToCeil(float(g_Voters) * g_ConVars[needed].FloatValue);
 }
 
 void StartRTV()
@@ -417,6 +521,8 @@ void StartRTV()
 	{
 		return;	
 	}
+
+	RecalculateRTVVoters();
 	
 	if (EndOfMapVoteEnabled() && HasEndOfMapVoteFinished())
 	{
