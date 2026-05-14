@@ -331,14 +331,14 @@ public void OnConfigsExecuted()
 		}
 	}
 
+	g_TotalRounds = 0;
+	g_Extends = 0;
+	g_MapVoteCompleted = false;
+	g_HasVoteStarted = false;
+	g_WaitingForVote = false;
+
 	CreateNextVote();
 	SetupTimeleftTimer();
-	
-	g_TotalRounds = 0;
-	
-	g_Extends = 0;
-	
-	g_MapVoteCompleted = false;
 	
 	g_NominateList.Clear();
 	g_NominateOwners.Clear();
@@ -437,29 +437,33 @@ public void OnMapTimeLeftChanged()
 
 void SetupTimeleftTimer()
 {
+	if (g_VoteTimer != null)
+	{
+		KillTimer(g_VoteTimer);
+		g_VoteTimer = null;
+	}
+
+	if (!g_MapList.Length || !g_ConVars[mapvote_endvote].BoolValue || g_MapVoteCompleted || g_HasVoteStarted)
+	{
+		return;
+	}
+
 	int time;
 	if (GetMapTimeLeft(time) && time > 0)
 	{
 		int startTime = g_ConVars[mapvote_start].IntValue * 60;
-		if (time - startTime < 0 && g_ConVars[mapvote_endvote].BoolValue && !g_MapVoteCompleted && !g_HasVoteStarted)
+		if (time <= startTime)
 		{
 			InitiateVote(MapChange_MapEnd, null);
+			return;
 		}
-		else
-		{
-			if (g_VoteTimer != null)
-			{
-				KillTimer(g_VoteTimer);
-				g_VoteTimer = null;
-			}	
-			
-			//g_VoteTimer = CreateTimer(float(time - startTime), Timer_StartMapVote, _, TIMER_FLAG_NO_MAPCHANGE);
-			DataPack data;
-			g_VoteTimer = CreateDataTimer(float(time - startTime), Timer_StartMapVote, data, TIMER_FLAG_NO_MAPCHANGE);
-			data.WriteCell(MapChange_MapEnd);
-			data.WriteCell(INVALID_HANDLE);
-			data.Reset();
-		}		
+
+		//g_VoteTimer = CreateTimer(float(time - startTime), Timer_StartMapVote, _, TIMER_FLAG_NO_MAPCHANGE);
+		DataPack data;
+		g_VoteTimer = CreateDataTimer(float(time - startTime), Timer_StartMapVote, data, TIMER_FLAG_NO_MAPCHANGE);
+		data.WriteCell(MapChange_MapEnd);
+		data.WriteCell(INVALID_HANDLE);
+		data.Reset();
 	}
 }
 
