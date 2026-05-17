@@ -269,7 +269,7 @@ public void OnPluginStart()
 	g_ConVars[progress_console]  	   = CreateConVar("nativevotes_progress_console", "0", "Show current vote progress as console messages", FCVAR_NONE, true, 0.0, true, 1.0);
 	g_ConVars[progress_client_console] = CreateConVar("nativevotes_progress_client_console", "0", "Show current vote progress as console messages to clients", FCVAR_NONE, true, 0.0, true, 1.0);
 	g_ConVars[vote_delay] 		 	   = CreateConVar("nativevotes_vote_delay", "30", "Sets the recommended time in between public votes", FCVAR_NONE, true, 0.0);
-	g_ConVars[mapvote_debug_logging]  = CreateConVar("nativevotes_mapvote_debug_logging", "1", "Log per-client TF2 map vote option/start/count diagnostics", FCVAR_NONE, true, 0.0, true, 1.0);
+	g_ConVars[mapvote_debug_logging]  = CreateConVar("nativevotes_mapvote_debug_logging", "0", "Log per-client TF2 map vote option/start/count diagnostics", FCVAR_NONE, true, 0.0, true, 1.0);
 	g_ConVars[mapvote_min_playtime_hours] = CreateConVar("nativevotes_mapvote_min_playtime_hours", "0", "Minimum Whaletracker playtime hours required for TF2 map votes to count. 0 disables the gate.", FCVAR_NONE, true, 0.0);
 	g_ConVars[vote_delay].AddChangeHook(OnVoteDelayChange);
 
