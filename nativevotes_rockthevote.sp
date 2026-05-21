@@ -47,6 +47,8 @@
 #include <tf2>
 #define REQUIRE_EXTENSIONS
 
+#include "nativevotes_statistics.inc"
+
 native int Filters_GetChatName(int client, char[] buffer, int maxlen);
 native bool WhaleTracker_AreStatsLoaded(int client);
 native bool WhaleTracker_HasPlaytimeHours(int client, int hours);
@@ -104,6 +106,7 @@ public void OnPluginStart()
 {
 	LoadTranslations("common.phrases");
 	LoadTranslations("rockthevote.phrases");
+	NativeVoteStats_Init();
 	
 	g_ConVars[needed] 		  = CreateConVar("sm_rtv_needed", "0.60", "Percentage of players needed to rockthevote (Def 60%)", 0, true, 0.05, true, 1.0);
 	g_ConVars[minplayers]     = CreateConVar("sm_rtv_minplayers", "0", "Number of players required before RTV will be enabled.", 0, true, 0.0, true, float(MAXPLAYERS));
@@ -296,6 +299,7 @@ public Action Command_ForceRTV(int client, int args)
 		g_RTVAllowed = true;
 	}
 
+	NativeVoteStats_LogEvent("rtv_forced", "", client, -1, 0, 0, g_Voters, "");
 	StartRTV();
 	
 	return Plugin_Handled;
@@ -375,6 +379,7 @@ void AttemptRTV(int client, bool isVoteMenu=false)
 
 	if (!IsRTVEligibleClient(client))
 	{
+		NativeVoteStats_LogEvent("eligibility_failure", "", client, -1, 0, 0, g_Voters, "rtv_playtime");
 		CReplyToCommand(client, "[{lightgreen}Rock The Vote\x01] You need a higher playtime on this server to rock the vote");
 		if (isVoteMenu && g_NativeVotes)
 		{
@@ -404,6 +409,7 @@ void AttemptRTV(int client, bool isVoteMenu=false)
 
 	g_Votes++;
 	g_Voted[client] = true;
+	NativeVoteStats_LogEvent("rtv", "", client, -1, g_Votes, g_VotesNeeded, g_Voters, "");
 	
 	CPrintToChatAllEx(client, "[{lightgreen}Rock The Vote\x01] %t", "RTV Requested", name, g_Votes, g_VotesNeeded);
 	

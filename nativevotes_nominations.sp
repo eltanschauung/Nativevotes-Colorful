@@ -40,6 +40,8 @@
 #include <nativevotes>
 #define REQUIRE_PLUGIN
 
+#include "nativevotes_statistics.inc"
+
 native int Filters_GetChatName(int client, char[] buffer, int maxlen);
 
 #pragma semicolon 1
@@ -103,6 +105,7 @@ public void OnPluginStart()
 {
 	LoadTranslations("common.phrases");
 	LoadTranslations("nominations.phrases");
+	NativeVoteStats_Init();
 	
 	g_MapList = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
 
@@ -605,10 +608,12 @@ void AttemptNominate(int client, const char[] map, int size, bool isVoteMenu)
 
 	if (result == Nominate_Added)
 	{
+		NativeVoteStats_LogEvent("nomination", mapname, client, -1, 0, 0, 0, "added");
 		CPrintToChatAllEx(client, "[{lightgreen}Nominations\x01] %t", "Map Nominated", name, displayName);
 	}
 	else
 	{
+		NativeVoteStats_LogEvent("nomination", mapname, client, -1, 0, 0, 0, "replaced");
 		CReplyToCommandEx(client, client, "[{lightgreen}Nominations\x01] %t", "Map Nominated", name, displayName);
 	}
 	

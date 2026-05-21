@@ -47,6 +47,8 @@
 #include <ripext>
 #define REQUIRE_EXTENSIONS
 
+#include "nativevotes_statistics.inc"
+
 #pragma semicolon 1
 #pragma newdecls required
 
@@ -143,6 +145,7 @@ public void OnPluginStart()
 {
 	LoadTranslations("mapchooser.phrases");
 	LoadTranslations("common.phrases");
+	NativeVoteStats_Init();
 
 	KeyValues kv = new KeyValues("GameInfo");
 	kv.ImportFromFile("gameinfo.txt");
@@ -885,6 +888,7 @@ void InitiateVote(MapChange when, ArrayList inputlist=null)
 	if (!displayed)
 	{
 		PrintToServer("[Nativevotes] Skipping vote due to no eligible clients.");
+		NativeVoteStats_LogEvent("eligibility_failure", "", 0, -1, 0, 0, 0, "no_eligible_clients");
 		g_HasVoteStarted = false;
 		if (g_NativeVotes)
 		{
@@ -897,8 +901,49 @@ void InitiateVote(MapChange when, ArrayList inputlist=null)
 		return;
 	}
 
+	NativeVoteStats_BeginVote("map_vote");
+	LogCurrentVoteOptions(g_NativeVotes);
 	LogAction(-1, -1, "Voting for next map has started.");
 	CPrintToChatAll("[{lightgreen}MapChooser\x01] %t", "Nextmap Voting Started");
+}
+
+void LogCurrentVoteOptions(bool isNativeVotes)
+{
+	int itemCount = 0;
+	if (isNativeVotes)
+	{
+		if (g_VoteNative == null)
+		{
+			return;
+		}
+		itemCount = g_VoteNative.ItemCount;
+	}
+	else
+	{
+		if (g_VoteMenu == null)
+		{
+			return;
+		}
+		itemCount = g_VoteMenu.ItemCount;
+	}
+
+	char map[PLATFORM_MAX_PATH];
+	char displayName[PLATFORM_MAX_PATH];
+	for (int i = 0; i < itemCount; i++)
+	{
+		map[0] = '\0';
+		displayName[0] = '\0';
+		if (isNativeVotes)
+		{
+			g_VoteNative.GetItem(i, map, sizeof(map), displayName, sizeof(displayName));
+		}
+		else
+		{
+			g_VoteMenu.GetItem(i, map, sizeof(map), _, displayName, sizeof(displayName));
+		}
+
+		NativeVoteStats_LogEvent("vote_option", map, 0, i, 0, 0, NativeVoteStats_CountHumanClients(), displayName);
+	}
 }
 
 public void Handler_NV_VoteFinishedGeneric(NativeVote menu, int num_votes,  int num_clients, const int[] client_indexes, const int[] client_votes, int num_items, const int[] item_indexes, const int[] item_votes)
@@ -926,6 +971,15 @@ public void Handler_VoteFinishedGeneric(Menu menu, int num_votes, int num_client
 
 public void Handler_VoteFinishedGenericShared(const char[] map, const char[] displayName, int num_votes, int num_clients, const int[][] client_info, int num_items, const int[][] item_info, bool isNativeVotes)
 {
+	int winningVotes = 0;
+	int winningIndex = -1;
+	if (num_items > 0)
+	{
+		winningVotes = item_info[0][VOTEINFO_ITEM_VOTES];
+		winningIndex = item_info[0][VOTEINFO_ITEM_INDEX];
+	}
+	NativeVoteStats_LogEvent("vote_winner", map, 0, winningIndex, winningVotes, num_votes, num_clients, displayName);
+
 	if (strcmp(map, VOTE_EXTEND, false) == 0)
 	{
 		g_Extends++;
@@ -1096,8 +1150,14 @@ public Action Timer_NV_Runoff(Handle timer, DataPack data)
 	if (!g_VoteNative.DisplayVoteToAll(voteDuration))
 	{
 		PrintToServer("[Nativevotes] Skipping vote due to no eligible clients.");
+		NativeVoteStats_LogEvent("eligibility_failure", "", 0, -1, 0, 0, 0, "runoff_no_eligible_clients");
 		g_HasVoteStarted = false;
 		g_VoteNative.Close();
+	}
+	else
+	{
+		NativeVoteStats_BeginVote("runoff_vote");
+		LogCurrentVoteOptions(true);
 	}
 	
 	return Plugin_Continue;
@@ -1129,10 +1189,13 @@ public void Handler_MapVoteFinished(Menu menu, int num_votes, int num_clients, c
 				if (!g_VoteMenu.DisplayVoteToAll(voteDuration))
 				{
 					PrintToServer("[Nativevotes] Skipping vote due to no eligible clients.");
+					NativeVoteStats_LogEvent("eligibility_failure", "", 0, -1, 0, 0, 0, "runoff_no_eligible_clients");
 					g_HasVoteStarted = false;
 					delete g_VoteMenu;
 					return;
 				}
+				NativeVoteStats_BeginVote("runoff_vote");
+				LogCurrentVoteOptions(false);
 			
 			/* Notify */
 			float map1percent = float(item_info[0][VOTEINFO_ITEM_VOTES])/ float(num_votes) * 100;
@@ -1212,7 +1275,12 @@ public int Handler_MapVoteMenu(Menu menu, MenuAction action, int param1, int par
 					
 					SetNextMap(map);
 					g_MapVoteCompleted = true;
+					NativeVoteStats_LogEvent("vote_winner", map, 0, item, 0, 0, NativeVoteStats_CountHumanClients(), "random_no_votes");
 				}
+			}
+			else if (param1 == VoteCancel_NoVotes)
+			{
+				NativeVoteStats_LogEvent("vote_cancel", "", 0, -1, 0, 0, NativeVoteStats_CountHumanClients(), "no_votes");
 			}
 			
 			g_HasVoteStarted = false;
@@ -1278,17 +1346,20 @@ public int Handler_NV_MapVoteMenu(NativeVote menu, MenuAction action, int param1
 					SetNextMap(map);
 					g_MapVoteCompleted = true;
 					menu.DisplayPass(displayName);
+					NativeVoteStats_LogEvent("vote_winner", map, 0, item, 0, 0, NativeVoteStats_CountHumanClients(), "random_no_votes");
 				}
 			}
 			else if (param1 == VoteCancel_NoVotes)
 			{
 				// We didn't have enough votes. Display the note enough votes fail message.
 				menu.DisplayFail(NativeVotesFail_NotEnoughVotes);
+				NativeVoteStats_LogEvent("vote_cancel", "", 0, -1, 0, 0, NativeVoteStats_CountHumanClients(), "no_votes");
 			}
 			else
 			{
 				// We were actually cancelled. Display the generic fail message
 				menu.DisplayFail(NativeVotesFail_Generic);
+				NativeVoteStats_LogEvent("vote_cancel", "", 0, -1, 0, 0, NativeVoteStats_CountHumanClients(), "cancelled");
 			}
 			
 			g_HasVoteStarted = false;
