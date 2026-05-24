@@ -36,6 +36,7 @@
 #pragma semicolon 1
 
 #include <sourcemod>
+#include <morecolors>
 #undef REQUIRE_PLUGIN
 #include <adminmenu>
 #include <nativevotes>
@@ -274,7 +275,7 @@ public Action Command_Vote(int client, int args)
 		}
 	}
 	LogAction(client, -1, "\"%L\" initiated a generic vote.", client);
-	CShowActivity2(client, "[{lightgreen}NativeVotes\x01] ", "%t", "Initiate Vote", g_voteArg);
+	CPrintToChatAll("[{lightgreen}NativeVotes{default}] Initiated a vote: {gold}%s", g_voteArg);
 	g_voteType = question;
 	Handle voteMenu;
 
