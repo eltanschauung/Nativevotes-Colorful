@@ -121,6 +121,8 @@ public void OnPluginStart()
 	RegConsoleCmd("sm_n", Command_Nominate);
 	RegConsoleCmd("sm_nom", Command_Nominate);
 	RegConsoleCmd("sm_nr", Command_Nominate);
+	RegConsoleCmd("sm_unnominate", Command_Unnominate);
+	RegConsoleCmd("sm_un", Command_Unnominate);
 	
 	RegAdminCmd("sm_nominate_addmap", Command_Addmap, ADMFLAG_CHANGEMAP, "sm_nominate_addmap <mapname> - Forces a map to be on the next mapvote.");
 	RegAdminCmd("sm_reload_nominations", Command_ReloadNominations, ADMFLAG_RCON, "Reload the nomination map cycle in-place");
@@ -228,11 +230,22 @@ public void OnClientDisconnect(int client)
 		return;
 	}
 
+	ClearPendingRandomNomination(client);
+}
+
+void ClearPendingRandomNomination(int client)
+{
+	if (client <= 0 || client > MaxClients)
+	{
+		return;
+	}
+
 	if (g_hRandomNominateTimer[client] != INVALID_HANDLE)
 	{
 		delete g_hRandomNominateTimer[client];
 		g_hRandomNominateTimer[client] = INVALID_HANDLE;
 	}
+
 	g_iRandomNominateUserId[client] = 0;
 	g_szRandomNominateMap[client][0] = '\0';
 }
@@ -399,6 +412,32 @@ public Action Command_Nominate(int client, int args)
 
 	delete results;
 
+	return Plugin_Handled;
+}
+
+public Action Command_Unnominate(int client, int args)
+{
+	if (!client)
+	{
+		return Plugin_Handled;
+	}
+
+	bool hadPendingRandom = g_hRandomNominateTimer[client] != INVALID_HANDLE || g_szRandomNominateMap[client][0] != '\0';
+	ClearPendingRandomNomination(client);
+
+	if (RemoveNominationByOwner(client))
+	{
+		CReplyToCommand(client, "[{lightgreen}Nominations\x01] Your nomination has been removed.");
+		return Plugin_Handled;
+	}
+
+	if (hadPendingRandom)
+	{
+		CReplyToCommand(client, "[{lightgreen}Nominations\x01] Your pending random nomination has been cancelled.");
+		return Plugin_Handled;
+	}
+
+	CReplyToCommand(client, "[{lightgreen}Nominations\x01] You do not have a nomination.");
 	return Plugin_Handled;
 }
 
