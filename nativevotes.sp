@@ -398,6 +398,7 @@ public void OnClientDisconnect_Post(int client)
 	}
 	
 	CancelClientVote(g_hCurVote, client, MenuCancel_Disconnected);
+	RefreshMapVoteTotalClients(false);
 }
 
 void CancelClientVote(NativeVote vote, int client, int reason)
@@ -733,6 +734,7 @@ void OnVoteSelect(NativeVote vote, int client, int item)
 			bool counted = ShouldCountClientVote(vote, client);
 			g_ClientVotes[client] = item;
 			g_ClientVoteCounted[client] = counted;
+			RefreshMapVoteTotalClients(false);
 
 			if (counted)
 			{
@@ -1116,6 +1118,79 @@ void DecrementPlayerCount()
 	
 }
 
+bool ShouldCountClientForMapVoteTotal(NativeVote vote, int client)
+{
+	if (!IsMapChoiceVote(vote) || client < 1 || client > MaxClients)
+	{
+		return false;
+	}
+
+	if (!Internal_IsClientInVotePool(client) || !IsClientInGame(client) || IsFakeClient(client))
+	{
+		return false;
+	}
+
+	int requiredHours = GetMapVotePlaytimeHours();
+	if (requiredHours <= 0)
+	{
+		return true;
+	}
+
+	if (!IsWhaleTrackerPlaytimeGateAvailable())
+	{
+		return true;
+	}
+
+	if (!AreWhaleTrackerStatsAvailableForClient(client))
+	{
+		return true;
+	}
+
+	return WhaleTracker_HasPlaytimeHours(client, requiredHours);
+}
+
+int CalculateMapVoteTotalClients(NativeVote vote)
+{
+	int totalClients;
+
+	for (int client = 1; client <= MaxClients; client++)
+	{
+		if (ShouldCountClientForMapVoteTotal(vote, client))
+		{
+			totalClients++;
+		}
+	}
+
+	return totalClients;
+}
+
+void RefreshMapVoteTotalClients(bool forceUpdate = false)
+{
+	if (!Internal_IsVoteInProgress() || !IsMapChoiceVote(g_hCurVote))
+	{
+		return;
+	}
+
+	int totalClients = CalculateMapVoteTotalClients(g_hCurVote);
+	if (totalClients < g_NumVotes)
+	{
+		totalClients = g_NumVotes;
+	}
+
+	if (!forceUpdate && totalClients == g_TotalClients)
+	{
+		return;
+	}
+
+	if (ShouldLogMapVoteDebug(g_hCurVote))
+	{
+		LogMessage("[NativeVotes MapVote Debug] refreshed applicable_clients=%d previous=%d counted_votes=%d", totalClients, g_TotalClients, g_NumVotes);
+	}
+
+	g_TotalClients = totalClients;
+	Game_UpdateVoteCounts(g_hVotes, g_TotalClients);
+}
+
 
 bool IsMapChoiceVote(NativeVote vote)
 {
@@ -1352,8 +1427,10 @@ bool StartVote(NativeVote vote, int num_clients, int[] clients, int max_time, in
 	}
 	
 	g_Clients = clientCount;
+	g_TotalClients = clientCount;
+	RefreshMapVoteTotalClients(true);
 	
-	Game_UpdateVoteCounts(g_hVotes, clientCount);
+	Game_UpdateVoteCounts(g_hVotes, g_TotalClients);
 	
 	DoClientVote(vote, clients, num_clients);	
 	
@@ -1444,6 +1521,7 @@ void StartVoting()
 	g_hDisplayTimer = CreateTimer(1.0, DisplayTimer, _, TIMER_REPEAT|TIMER_FLAG_NO_MAPCHANGE);
 
 	g_TotalClients = g_Clients;
+	RefreshMapVoteTotalClients(true);
 
 	/* By now we know how many clients were set.
 	 * If there are none, we should end IMMEDIATELY.
@@ -1493,6 +1571,7 @@ public Action DisplayTimer(Handle timer)
 		}
 		return Plugin_Stop;
 	}
+	RefreshMapVoteTotalClients(false);
 	DrawHintProgress();
 	--g_TimeLeft;
 	return Plugin_Continue;
@@ -1623,6 +1702,7 @@ bool Internal_RedrawToClient(int client, bool revotes)
 		g_ClientVotes[client] = VOTE_PENDING;
 		g_ClientVoteCounted[client] = false;
 		g_bRevoting[client] = true;
+		RefreshMapVoteTotalClients(false);
 	}
 	
 	// Display the vote fail screen for a few seconds

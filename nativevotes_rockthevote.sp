@@ -53,6 +53,8 @@ native int Filters_GetChatName(int client, char[] buffer, int maxlen);
 native bool WhaleTracker_AreStatsLoaded(int client);
 native bool WhaleTracker_HasPlaytimeHours(int client, int hours);
 
+#define RTV_VOTER_REFRESH_INTERVAL 5.0
+
 #pragma semicolon 1
 #pragma newdecls required
 
@@ -87,6 +89,7 @@ enum
 
 ConVar g_ConVars[MAX_CONVARS];
 ConVar g_MapVoteMinPlaytimeHours = null;
+Handle g_RTVVoterRefreshTimer = INVALID_HANDLE;
 
 bool g_RTVAllowed = false;					// True if RTV is available to players. Used to delay rtv votes.
 int g_Voters = 0;							// Total RTV-eligible voters connected. Doesn't include fake clients.
@@ -138,6 +141,7 @@ public void OnPluginStart()
 
 public void OnPluginEnd()
 {
+	StopRTVVoterRefreshTimer();
 	RemoveVoteHandler();
 }
 
@@ -176,6 +180,10 @@ public void OnLibraryAdded(const char[] name)
 		g_NativeVotes = true;
 		RegisterVoteHandler();
 	}
+	else if (StrEqual(name, "whaletracker", false))
+	{
+		RecalculateRTVVoters();
+	}
 }
 
 public void OnLibraryRemoved(const char[] name)
@@ -184,6 +192,10 @@ public void OnLibraryRemoved(const char[] name)
 	{
 		g_NativeVotes = false;
 		RemoveVoteHandler();
+	}
+	else if (StrEqual(name, "whaletracker", false))
+	{
+		RecalculateRTVVoters();
 	}
 }
 
@@ -199,6 +211,7 @@ public void TF2_OnWaitingForPlayersEnd()
 
 public void OnMapEnd()
 {
+	StopRTVVoterRefreshTimer();
 	g_RTVAllowed = false;
 	g_Voters = 0;
 	g_Votes = 0;
@@ -209,6 +222,7 @@ public void OnMapEnd()
 public void OnConfigsExecuted()
 {
 	RecalculateRTVVoters();
+	EnsureRTVVoterRefreshTimer();
 
 	if (g_ConVars[initialdelay].FloatValue <= 0.0)
 	{
@@ -219,6 +233,11 @@ public void OnConfigsExecuted()
 }
 
 public void OnClientConnected(int client)
+{
+	RecalculateRTVVoters();
+}
+
+public void OnClientPutInServer(int client)
 {
 	RecalculateRTVVoters();
 }
@@ -427,6 +446,33 @@ public Action Timer_DelayRTV(Handle timer)
 	return Plugin_Continue;
 }
 
+void EnsureRTVVoterRefreshTimer()
+{
+	if (g_RTVVoterRefreshTimer != INVALID_HANDLE)
+	{
+		return;
+	}
+
+	g_RTVVoterRefreshTimer = CreateTimer(RTV_VOTER_REFRESH_INTERVAL, Timer_RefreshRTVVoters, _, TIMER_REPEAT | TIMER_FLAG_NO_MAPCHANGE);
+}
+
+void StopRTVVoterRefreshTimer()
+{
+	if (g_RTVVoterRefreshTimer == INVALID_HANDLE)
+	{
+		return;
+	}
+
+	KillTimer(g_RTVVoterRefreshTimer);
+	g_RTVVoterRefreshTimer = INVALID_HANDLE;
+}
+
+public Action Timer_RefreshRTVVoters(Handle timer)
+{
+	RecalculateRTVVoters();
+	return Plugin_Continue;
+}
+
 int GetRTVMinPlaytimeHours()
 {
 	if (g_MapVoteMinPlaytimeHours == null)
@@ -460,7 +506,7 @@ bool AreWhaleTrackerStatsAvailableForClient(int client)
 
 bool IsRTVEligibleClient(int client)
 {
-	if (client <= 0 || client > MaxClients || !IsClientConnected(client) || IsFakeClient(client))
+	if (client <= 0 || client > MaxClients || !IsClientInGame(client) || IsFakeClient(client))
 	{
 		return false;
 	}
@@ -497,7 +543,7 @@ void RecalculateRTVVoters(int excludedClient = 0)
 			continue;
 		}
 
-		if (!IsClientConnected(client) || IsFakeClient(client))
+		if (!IsClientInGame(client) || IsFakeClient(client))
 		{
 			g_Voted[client] = false;
 			continue;
