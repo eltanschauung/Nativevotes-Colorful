@@ -133,11 +133,14 @@ int g_winCount[MAX_TEAMS];
 #define VOTE_EXTEND 	"##extend##"
 #define VOTE_DONTCHANGE "##dontchange##"
 #define MAP_EVAL_CONFIG_FILE "configs/mapeval.cfg"
+#define MAP_EVAL_DEFAULT_VOTE_WEIGHT 1
+#define MAP_EVAL_MAX_VOTE_WEIGHT 3
 
 // Libraries
 bool g_NativeVotes;
 bool g_RestInPawn;
 StringMap g_MapEvalGamemodes;
+StringMap g_MapEvalVoteWeights;
 char g_CurrentMap[PLATFORM_MAX_PATH];
 char g_GameMode[32];
 
@@ -168,6 +171,7 @@ public void OnPluginStart()
 	g_OldMapList = new ArrayList(arraySize);
 	g_NextMapList = new ArrayList(arraySize);
 	g_MapEvalGamemodes = new StringMap();
+	g_MapEvalVoteWeights = new StringMap();
 
 	g_ConVars[mapvote_endvote] 		 		= CreateConVar("sm_mapvote_endvote", "1", "Specifies if MapChooser should run an end of map vote.", _, true, 0.0, true, 1.0);
 	g_ConVars[mapvote_start] 		 		= CreateConVar("sm_mapvote_start", "3.0", "Specifies when to start the vote based on time remaining.", _, true, 1.0);
@@ -950,23 +954,176 @@ public void Handler_NV_VoteFinishedGeneric(NativeVote menu, int num_votes,  int 
 {
 	int[][] client_info = new int[num_clients][2];
 	int[][] item_info = new int[num_items][2];
+	int[][] weighted_item_info = new int[num_items][2];
 	
 	NativeVotes_FixResults(num_clients, client_indexes, client_votes, num_items, item_indexes, item_votes, client_info, item_info);
-	
-	char map[PLATFORM_MAX_PATH];
-	char displayName[PLATFORM_MAX_PATH];
-	menu.GetItem(item_indexes[0], map, sizeof(map), displayName, sizeof(displayName));
-	
-	Handler_VoteFinishedGenericShared(map, displayName, num_votes, num_clients, client_info, num_items, item_info, true);
+	int weighted_votes = BuildWeightedNativeVoteResults(menu, num_items, item_info, weighted_item_info);
+	FinishWeightedNativeVote(menu, weighted_votes, num_clients, client_info, num_items, weighted_item_info);
 }
 
 public void Handler_VoteFinishedGeneric(Menu menu, int num_votes, int num_clients, const int[][] client_info, int num_items, const int[][] item_info)
 {
+	int[][] weighted_item_info = new int[num_items][2];
+	int weighted_votes = BuildWeightedMenuVoteResults(menu, num_items, item_info, weighted_item_info);
+	FinishWeightedMenuVote(menu, weighted_votes, num_clients, client_info, num_items, weighted_item_info);
+}
+
+int ParseMapEvalVoteWeight(const char[] value)
+{
+	char trimmed[32];
+	strcopy(trimmed, sizeof(trimmed), value);
+	TrimString(trimmed);
+
+	if (!trimmed[0])
+	{
+		return MAP_EVAL_DEFAULT_VOTE_WEIGHT;
+	}
+
+	int weight = StringToInt(trimmed);
+	if (weight < MAP_EVAL_DEFAULT_VOTE_WEIGHT)
+	{
+		return MAP_EVAL_DEFAULT_VOTE_WEIGHT;
+	}
+	if (weight > MAP_EVAL_MAX_VOTE_WEIGHT)
+	{
+		return MAP_EVAL_MAX_VOTE_WEIGHT;
+	}
+
+	return weight;
+}
+
+int GetMapEvalVoteWeight(const char[] map)
+{
+	if (!map[0] || StrEqual(map, VOTE_EXTEND, false) || StrEqual(map, VOTE_DONTCHANGE, false))
+	{
+		return MAP_EVAL_DEFAULT_VOTE_WEIGHT;
+	}
+
+	if (g_MapEvalVoteWeights == null)
+	{
+		return MAP_EVAL_DEFAULT_VOTE_WEIGHT;
+	}
+
+	int weight;
+	if (!g_MapEvalVoteWeights.GetValue(map, weight))
+	{
+		return MAP_EVAL_DEFAULT_VOTE_WEIGHT;
+	}
+
+	if (weight < MAP_EVAL_DEFAULT_VOTE_WEIGHT)
+	{
+		return MAP_EVAL_DEFAULT_VOTE_WEIGHT;
+	}
+	if (weight > MAP_EVAL_MAX_VOTE_WEIGHT)
+	{
+		return MAP_EVAL_MAX_VOTE_WEIGHT;
+	}
+
+	return weight;
+}
+
+public int SortWeightedVoteItems(int[] a, int[] b, const int[][] array, Handle hndl)
+{
+	if (b[VOTEINFO_ITEM_VOTES] == a[VOTEINFO_ITEM_VOTES])
+	{
+		return 0;
+	}
+	else if (b[VOTEINFO_ITEM_VOTES] > a[VOTEINFO_ITEM_VOTES])
+	{
+		return 1;
+	}
+
+	return -1;
+}
+
+int BuildWeightedNativeVoteResults(NativeVote menu, int num_items, const int[][] item_info, int[][] weighted_item_info)
+{
+	int weightedVotes = 0;
 	char map[PLATFORM_MAX_PATH];
 	char displayName[PLATFORM_MAX_PATH];
-	menu.GetItem(item_info[0][VOTEINFO_ITEM_INDEX], map, sizeof(map), _, displayName, sizeof(displayName));
-	
-	Handler_VoteFinishedGenericShared(map, displayName, num_votes, num_clients, client_info, num_items, item_info, false);
+
+	for (int i = 0; i < num_items; i++)
+	{
+		int itemIndex = item_info[i][VOTEINFO_ITEM_INDEX];
+		int rawVotes = item_info[i][VOTEINFO_ITEM_VOTES];
+		int weight = MAP_EVAL_DEFAULT_VOTE_WEIGHT;
+
+		if (menu != null)
+		{
+			menu.GetItem(itemIndex, map, sizeof(map), displayName, sizeof(displayName));
+			weight = GetMapEvalVoteWeight(map);
+		}
+
+		weighted_item_info[i][VOTEINFO_ITEM_INDEX] = itemIndex;
+		weighted_item_info[i][VOTEINFO_ITEM_VOTES] = rawVotes * weight;
+		weightedVotes += weighted_item_info[i][VOTEINFO_ITEM_VOTES];
+
+		if (weight > MAP_EVAL_DEFAULT_VOTE_WEIGHT)
+		{
+			LogMessage("[NativeVotes MapChooser] Weighted map vote result: map=%s raw=%d weight=%d weighted=%d", map, rawVotes, weight, weighted_item_info[i][VOTEINFO_ITEM_VOTES]);
+		}
+	}
+
+	SortCustom2D(weighted_item_info, num_items, SortWeightedVoteItems);
+	return weightedVotes;
+}
+
+int BuildWeightedMenuVoteResults(Menu menu, int num_items, const int[][] item_info, int[][] weighted_item_info)
+{
+	int weightedVotes = 0;
+	char map[PLATFORM_MAX_PATH];
+	char displayName[PLATFORM_MAX_PATH];
+
+	for (int i = 0; i < num_items; i++)
+	{
+		int itemIndex = item_info[i][VOTEINFO_ITEM_INDEX];
+		int rawVotes = item_info[i][VOTEINFO_ITEM_VOTES];
+		int weight = MAP_EVAL_DEFAULT_VOTE_WEIGHT;
+
+		if (menu != null)
+		{
+			menu.GetItem(itemIndex, map, sizeof(map), _, displayName, sizeof(displayName));
+			weight = GetMapEvalVoteWeight(map);
+		}
+
+		weighted_item_info[i][VOTEINFO_ITEM_INDEX] = itemIndex;
+		weighted_item_info[i][VOTEINFO_ITEM_VOTES] = rawVotes * weight;
+		weightedVotes += weighted_item_info[i][VOTEINFO_ITEM_VOTES];
+
+		if (weight > MAP_EVAL_DEFAULT_VOTE_WEIGHT)
+		{
+			LogMessage("[NativeVotes MapChooser] Weighted map vote result: map=%s raw=%d weight=%d weighted=%d", map, rawVotes, weight, weighted_item_info[i][VOTEINFO_ITEM_VOTES]);
+		}
+	}
+
+	SortCustom2D(weighted_item_info, num_items, SortWeightedVoteItems);
+	return weightedVotes;
+}
+
+void FinishWeightedNativeVote(NativeVote menu, int weighted_votes, int num_clients, const int[][] client_info, int num_items, const int[][] item_info)
+{
+	char map[PLATFORM_MAX_PATH];
+	char displayName[PLATFORM_MAX_PATH];
+
+	if (num_items > 0)
+	{
+		menu.GetItem(item_info[0][VOTEINFO_ITEM_INDEX], map, sizeof(map), displayName, sizeof(displayName));
+	}
+
+	Handler_VoteFinishedGenericShared(map, displayName, weighted_votes, num_clients, client_info, num_items, item_info, true);
+}
+
+void FinishWeightedMenuVote(Menu menu, int weighted_votes, int num_clients, const int[][] client_info, int num_items, const int[][] item_info)
+{
+	char map[PLATFORM_MAX_PATH];
+	char displayName[PLATFORM_MAX_PATH];
+
+	if (num_items > 0)
+	{
+		menu.GetItem(item_info[0][VOTEINFO_ITEM_INDEX], map, sizeof(map), _, displayName, sizeof(displayName));
+	}
+
+	Handler_VoteFinishedGenericShared(map, displayName, weighted_votes, num_clients, client_info, num_items, item_info, false);
 }
 
 public void Handler_VoteFinishedGenericShared(const char[] map, const char[] displayName, int num_votes, int num_clients, const int[][] client_info, int num_items, const int[][] item_info, bool isNativeVotes)
@@ -1084,10 +1241,16 @@ public void Handler_VoteFinishedGenericShared(const char[] map, const char[] dis
 
 public void Handler_NV_MapVoteFinished(NativeVote menu, int num_votes, int num_clients, const int[] client_indexes, const int[] client_votes, int num_items, const int[] item_indexes, const int[] item_votes)
 {
+	int[][] item_info = new int[num_items][2];
+	int[][] weighted_item_info = new int[num_items][2];
+	int[][] client_info = new int[num_clients][2];
+	NativeVotes_FixResults(num_clients, client_indexes, client_votes, num_items, item_indexes, item_votes, client_info, item_info);
+	int weighted_votes = BuildWeightedNativeVoteResults(menu, num_items, item_info, weighted_item_info);
+
 	if (g_ConVars[mapvote_runoff].BoolValue && num_items > 1)
 	{
-		float winningvotes = float(item_votes[0]);
-		float required = num_votes * (g_ConVars[mapvote_runoffpercent].FloatValue / 100.0);
+		float winningvotes = float(weighted_item_info[0][VOTEINFO_ITEM_VOTES]);
+		float required = weighted_votes * (g_ConVars[mapvote_runoffpercent].FloatValue / 100.0);
 		
 		if (winningvotes < required)
 		{
@@ -1103,8 +1266,8 @@ public void Handler_NV_MapVoteFinished(NativeVote menu, int num_votes, int num_c
 			
 			DataPack data;
 			
-			menu.GetItem(item_indexes[0], map1, sizeof(map1), info1, sizeof(info1));
-			menu.GetItem(item_indexes[1], map2, sizeof(map2), info2, sizeof(info2));
+			menu.GetItem(weighted_item_info[0][VOTEINFO_ITEM_INDEX], map1, sizeof(map1), info1, sizeof(info1));
+			menu.GetItem(weighted_item_info[1][VOTEINFO_ITEM_INDEX], map2, sizeof(map2), info2, sizeof(info2));
 			
 			CreateDataTimer(3.0, Timer_NV_Runoff, data, TIMER_FLAG_NO_MAPCHANGE);
 			
@@ -1116,8 +1279,8 @@ public void Handler_NV_MapVoteFinished(NativeVote menu, int num_votes, int num_c
 			data.Reset();
 			
 			/* Notify */
-			float map1percent = float(item_votes[0])/ float(num_votes) * 100;
-			float map2percent = float(item_votes[1])/ float(num_votes) * 100;
+			float map1percent = float(weighted_item_info[0][VOTEINFO_ITEM_VOTES]) / float(weighted_votes) * 100;
+			float map2percent = float(weighted_item_info[1][VOTEINFO_ITEM_VOTES]) / float(weighted_votes) * 100;
 			
 			
 			CPrintToChatAll("[{lightgreen}MapChooser\x01] %t", "Starting Runoff", g_ConVars[mapvote_runoffpercent].FloatValue, info1, map1percent, info2, map2percent);
@@ -1127,7 +1290,7 @@ public void Handler_NV_MapVoteFinished(NativeVote menu, int num_votes, int num_c
 		}
 	}
 	
-	Handler_NV_VoteFinishedGeneric(menu, num_votes, num_clients, client_indexes, client_votes, num_items, item_indexes, item_votes);
+	FinishWeightedNativeVote(menu, weighted_votes, num_clients, client_info, num_items, weighted_item_info);
 }
 
 // New in 1.5.1, used to fix runoff not working properly
@@ -1165,10 +1328,13 @@ public Action Timer_NV_Runoff(Handle timer, DataPack data)
 
 public void Handler_MapVoteFinished(Menu menu, int num_votes, int num_clients, const int[][] client_info, int num_items, const int[][] item_info)
 {
+	int[][] weighted_item_info = new int[num_items][2];
+	int weighted_votes = BuildWeightedMenuVoteResults(menu, num_items, item_info, weighted_item_info);
+
 	if (g_ConVars[mapvote_runoff].BoolValue && num_items > 1)
 	{
-		float winningvotes = float(item_info[0][VOTEINFO_ITEM_VOTES]);
-		float required = num_votes * (g_ConVars[mapvote_runoffpercent].FloatValue / 100.0);
+		float winningvotes = float(weighted_item_info[0][VOTEINFO_ITEM_VOTES]);
+		float required = weighted_votes * (g_ConVars[mapvote_runoffpercent].FloatValue / 100.0);
 		
 		if (winningvotes < required)
 		{
@@ -1179,9 +1345,9 @@ public void Handler_MapVoteFinished(Menu menu, int num_votes, int num_clients, c
 
 			char map[PLATFORM_MAX_PATH], info1[PLATFORM_MAX_PATH], info2[PLATFORM_MAX_PATH];
 			
-			menu.GetItem(item_info[0][VOTEINFO_ITEM_INDEX], map, sizeof(map), _, info1, sizeof(info1));
+			menu.GetItem(weighted_item_info[0][VOTEINFO_ITEM_INDEX], map, sizeof(map), _, info1, sizeof(info1));
 			g_VoteMenu.AddItem(map, info1);
-			menu.GetItem(item_info[1][VOTEINFO_ITEM_INDEX], map, sizeof(map), _, info2, sizeof(info2));
+			menu.GetItem(weighted_item_info[1][VOTEINFO_ITEM_INDEX], map, sizeof(map), _, info2, sizeof(info2));
 			g_VoteMenu.AddItem(map, info2);
 			
 				int voteDuration = g_ConVars[mapvote_voteduration].IntValue;
@@ -1198,8 +1364,8 @@ public void Handler_MapVoteFinished(Menu menu, int num_votes, int num_clients, c
 				LogCurrentVoteOptions(false);
 			
 			/* Notify */
-			float map1percent = float(item_info[0][VOTEINFO_ITEM_VOTES])/ float(num_votes) * 100;
-			float map2percent = float(item_info[1][VOTEINFO_ITEM_VOTES])/ float(num_votes) * 100;
+			float map1percent = float(weighted_item_info[0][VOTEINFO_ITEM_VOTES]) / float(weighted_votes) * 100;
+			float map2percent = float(weighted_item_info[1][VOTEINFO_ITEM_VOTES]) / float(weighted_votes) * 100;
 			
 			CPrintToChatAll("[{lightgreen}MapChooser\x01] %t", "Starting Runoff", g_ConVars[mapvote_runoffpercent].FloatValue, info1, map1percent, info2, map2percent);
 			LogMessage("Voting for next map was indecisive, beginning runoff vote");
@@ -1208,7 +1374,7 @@ public void Handler_MapVoteFinished(Menu menu, int num_votes, int num_clients, c
 		}
 	}
 	
-	Handler_VoteFinishedGeneric(menu, num_votes, num_clients, client_info, num_items, item_info);
+	FinishWeightedMenuVote(menu, weighted_votes, num_clients, client_info, num_items, weighted_item_info);
 }
 
 public int Handler_MapVoteMenu(Menu menu, MenuAction action, int param1, int param2)
@@ -1444,6 +1610,11 @@ void UpdateGameModeFromMap()
 
 void ClearMapEvalConfig()
 {
+	if (g_MapEvalVoteWeights != null)
+	{
+		g_MapEvalVoteWeights.Clear();
+	}
+
 	if (g_MapEvalGamemodes == null)
 	{
 		return;
@@ -1500,6 +1671,10 @@ void LoadMapEvalConfig()
 	if (g_MapEvalGamemodes == null)
 	{
 		g_MapEvalGamemodes = new StringMap();
+	}
+	if (g_MapEvalVoteWeights == null)
+	{
+		g_MapEvalVoteWeights = new StringMap();
 	}
 
 	ClearMapEvalConfig();
@@ -1559,7 +1734,12 @@ void LoadMapEvalConfig()
 						kv.GetSectionName(mapName, sizeof(mapName));
 						if (mapName[0])
 						{
+							char weightValue[32];
+							kv.GetString(NULL_STRING, weightValue, sizeof(weightValue), "");
+							int voteWeight = ParseMapEvalVoteWeight(weightValue);
+
 							maps.PushString(mapName);
+							g_MapEvalVoteWeights.SetValue(mapName, voteWeight);
 						}
 					}
 					while (kv.GotoNextKey(false));
