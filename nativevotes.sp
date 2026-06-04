@@ -1188,6 +1188,7 @@ void RefreshMapVoteTotalClients(bool forceUpdate = false)
 	}
 
 	g_TotalClients = totalClients;
+	Game_UpdateClientCount(g_TotalClients);
 	Game_UpdateVoteCounts(g_hVotes, g_TotalClients);
 }
 
