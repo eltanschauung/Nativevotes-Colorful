@@ -48,6 +48,7 @@
 #define REQUIRE_EXTENSIONS
 
 #include "nativevotes_statistics.inc"
+#include "nativevotes_vote_privileges.inc"
 
 native int Filters_GetChatName(int client, char[] buffer, int maxlen);
 native bool WhaleTracker_AreStatsLoaded(int client);
@@ -96,6 +97,7 @@ int g_Voters = 0;							// Total RTV-eligible voters connected. Doesn't include 
 int g_Votes = 0;							// Total number of "say rtv" votes
 int g_VotesNeeded = 0;						// Necessary votes before map vote begins. (voters * percent_needed)
 bool g_Voted[MAXPLAYERS+1] = {false, ...};
+int g_RTVVoteWeight[MAXPLAYERS+1] = {0, ...};
 
 bool g_InChange = false;
 
@@ -110,6 +112,7 @@ public void OnPluginStart()
 	LoadTranslations("common.phrases");
 	LoadTranslations("rockthevote.phrases");
 	NativeVoteStats_Init();
+	NativeVotePrefs_Init(false);
 	
 	g_ConVars[needed] 		  = CreateConVar("sm_rtv_needed", "0.60", "Percentage of players needed to rockthevote (Def 60%)", 0, true, 0.05, true, 1.0);
 	g_ConVars[minplayers]     = CreateConVar("sm_rtv_minplayers", "0", "Number of players required before RTV will be enabled.", 0, true, 0.0, true, float(MAXPLAYERS));
@@ -214,7 +217,7 @@ public void OnMapEnd()
 	StopRTVVoterRefreshTimer();
 	g_RTVAllowed = false;
 	g_Voters = 0;
-	g_Votes = 0;
+	ResetRTV();
 	g_VotesNeeded = 0;
 	g_InChange = false;
 }
@@ -245,6 +248,7 @@ public void OnClientPutInServer(int client)
 public void OnClientDisconnect(int client)
 {	
 	g_Voted[client] = false;
+	g_RTVVoteWeight[client] = 0;
 	RecalculateRTVVoters(client);
 	
 	if (g_Votes && 
@@ -352,11 +356,14 @@ void AttemptUnRTV(int client)
 	char name[MAX_NAME_LENGTH];
 	GetPlayerName(client, name, sizeof(name));
 
-	if (g_Votes > 0)
+	int voteWeight = g_RTVVoteWeight[client] > 0 ? g_RTVVoteWeight[client] : NativeVotePrefs_GetRTVWeight(client);
+	g_Votes -= voteWeight;
+	if (g_Votes < 0)
 	{
-		g_Votes--;
+		g_Votes = 0;
 	}
 	g_Voted[client] = false;
+	g_RTVVoteWeight[client] = 0;
 
 	CPrintToChatAllEx(client, "[{lightgreen}Rock The Vote\x01] %s has removed their RTV. (%d/%d needed)", name, g_Votes, g_VotesNeeded);
 }
@@ -426,8 +433,10 @@ void AttemptRTV(int client, bool isVoteMenu=false)
 	char name[MAX_NAME_LENGTH];
 	GetPlayerName(client, name, sizeof(name));
 
-	g_Votes++;
+	int voteWeight = NativeVotePrefs_GetRTVWeight(client);
+	g_Votes += voteWeight;
 	g_Voted[client] = true;
+	g_RTVVoteWeight[client] = voteWeight;
 	NativeVoteStats_LogEvent("rtv", "", client, -1, g_Votes, g_VotesNeeded, g_Voters, "");
 	
 	CPrintToChatAllEx(client, "[{lightgreen}Rock The Vote\x01] %t", "RTV Requested", name, g_Votes, g_VotesNeeded);
@@ -540,25 +549,30 @@ void RecalculateRTVVoters(int excludedClient = 0)
 		if (client == excludedClient)
 		{
 			g_Voted[client] = false;
+			g_RTVVoteWeight[client] = 0;
 			continue;
 		}
 
 		if (!IsClientInGame(client) || IsFakeClient(client))
 		{
 			g_Voted[client] = false;
+			g_RTVVoteWeight[client] = 0;
 			continue;
 		}
 
 		if (!IsRTVEligibleClient(client))
 		{
 			g_Voted[client] = false;
+			g_RTVVoteWeight[client] = 0;
 			continue;
 		}
 
 		voters++;
 		if (g_Voted[client])
 		{
-			votes++;
+			int voteWeight = g_RTVVoteWeight[client] > 0 ? g_RTVVoteWeight[client] : NativeVotePrefs_GetRTVWeight(client);
+			g_RTVVoteWeight[client] = voteWeight;
+			votes += voteWeight;
 		}
 	}
 
@@ -617,6 +631,7 @@ void ResetRTV()
 	for (int i = 1; i <= MAXPLAYERS; i++)
 	{
 		g_Voted[i] = false;
+		g_RTVVoteWeight[i] = 0;
 	}
 }
 
