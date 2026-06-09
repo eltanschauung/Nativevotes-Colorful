@@ -135,6 +135,7 @@ int g_winCount[MAX_TEAMS];
 #define MAP_EVAL_CONFIG_FILE "configs/mapeval.cfg"
 #define MAP_EVAL_DEFAULT_VOTE_WEIGHT 1
 #define MAP_EVAL_MAX_VOTE_WEIGHT 3
+#define MAPVOTE_DISPLAYED_VOTE_COUNT_MAX 12
 
 // Libraries
 bool g_NativeVotes;
@@ -1022,6 +1023,15 @@ int GetMapEvalVoteWeight(const char[] map)
 	return weight;
 }
 
+int GetDisplayedMapVoteCount(int voteCount)
+{
+	if (voteCount > MAPVOTE_DISPLAYED_VOTE_COUNT_MAX)
+	{
+		return MAPVOTE_DISPLAYED_VOTE_COUNT_MAX;
+	}
+	return voteCount;
+}
+
 public int SortWeightedVoteItems(int[] a, int[] b, const int[][] array, Handle hndl)
 {
 	if (b[VOTEINFO_ITEM_VOTES] == a[VOTEINFO_ITEM_VOTES])
@@ -1136,6 +1146,7 @@ public void Handler_VoteFinishedGenericShared(const char[] map, const char[] dis
 		winningIndex = item_info[0][VOTEINFO_ITEM_INDEX];
 	}
 	NativeVoteStats_LogEvent("vote_winner", map, 0, winningIndex, winningVotes, num_votes, num_clients, displayName);
+	int displayedVotes = GetDisplayedMapVoteCount(num_votes);
 
 	if (strcmp(map, VOTE_EXTEND, false) == 0)
 	{
@@ -1177,7 +1188,7 @@ public void Handler_VoteFinishedGenericShared(const char[] map, const char[] dis
 			}
 		}
 
-		CPrintToChatAll("[{lightgreen}MapChooser\x01] %t", "Current Map Extended", RoundToFloor(float(item_info[0][VOTEINFO_ITEM_VOTES])/float(num_votes)*100), num_votes);
+		CPrintToChatAll("[{lightgreen}MapChooser\x01] %t", "Current Map Extended", RoundToFloor(float(item_info[0][VOTEINFO_ITEM_VOTES])/float(num_votes)*100), displayedVotes);
 		LogAction(-1, -1, "Voting for next map has finished. The current map has been extended.");
 		
 		if (isNativeVotes)
@@ -1193,7 +1204,7 @@ public void Handler_VoteFinishedGenericShared(const char[] map, const char[] dis
 	}
 	else if (strcmp(map, VOTE_DONTCHANGE, false) == 0)
 	{
-		CPrintToChatAll("[{lightgreen}MapChooser\x01] %t", "Current Map Stays", RoundToFloor(float(item_info[0][VOTEINFO_ITEM_VOTES])/float(num_votes)*100), num_votes);
+		CPrintToChatAll("[{lightgreen}MapChooser\x01] %t", "Current Map Stays", RoundToFloor(float(item_info[0][VOTEINFO_ITEM_VOTES])/float(num_votes)*100), displayedVotes);
 		LogAction(-1, -1, "Voting for next map has finished. 'No Change' was the winner");
 		
 		if (isNativeVotes)
@@ -1234,7 +1245,7 @@ public void Handler_VoteFinishedGenericShared(const char[] map, const char[] dis
 		
 		char formattedName[PLATFORM_MAX_PATH];
 		Format(formattedName, sizeof(formattedName), "\x05%s\x01", displayName);
-		CPrintToChatAll("[{lightgreen}MapChooser\x01] %t", "Nextmap Voting Finished", formattedName, RoundToFloor(float(item_info[0][VOTEINFO_ITEM_VOTES])/float(num_votes)*100), num_votes);
+		CPrintToChatAll("[{lightgreen}MapChooser\x01] %t", "Nextmap Voting Finished", formattedName, RoundToFloor(float(item_info[0][VOTEINFO_ITEM_VOTES])/float(num_votes)*100), displayedVotes);
 		LogAction(-1, -1, "Voting for next map has finished. Nextmap: %s.", map);
 	}	
 }
