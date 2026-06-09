@@ -1638,39 +1638,17 @@ void ClearMapEvalConfig()
 	{
 		snapshot.GetKey(i, gamemode, sizeof(gamemode));
 
-		int tiersValue;
-		if (!g_MapEvalGamemodes.GetValue(gamemode, tiersValue))
+		int mapsValue;
+		if (!g_MapEvalGamemodes.GetValue(gamemode, mapsValue))
 		{
 			continue;
 		}
 
-		StringMap tiers = view_as<StringMap>(tiersValue);
-		if (tiers == null)
+		ArrayList maps = view_as<ArrayList>(mapsValue);
+		if (maps != null)
 		{
-			continue;
+			delete maps;
 		}
-
-		StringMapSnapshot tierSnapshot = tiers.Snapshot();
-		char tierName[64];
-		for (int t = 0; t < tierSnapshot.Length; t++)
-		{
-			tierSnapshot.GetKey(t, tierName, sizeof(tierName));
-
-			int mapsValue;
-			if (!tiers.GetValue(tierName, mapsValue))
-			{
-				continue;
-			}
-
-			ArrayList maps = view_as<ArrayList>(mapsValue);
-			if (maps != null)
-			{
-				delete maps;
-			}
-		}
-
-		delete tierSnapshot;
-		delete tiers;
 	}
 
 	delete snapshot;
@@ -1722,50 +1700,47 @@ void LoadMapEvalConfig()
 			continue;
 		}
 
-		StringMap tiers = new StringMap();
+		ArrayList maps = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
 
 		if (kv.GotoFirstSubKey(false))
 		{
 			do
 			{
-				char tierName[64];
-				kv.GetSectionName(tierName, sizeof(tierName));
-				if (!tierName[0])
+				char mapName[PLATFORM_MAX_PATH];
+				kv.GetSectionName(mapName, sizeof(mapName));
+				if (!mapName[0])
 				{
 					continue;
 				}
 
-				ArrayList maps = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
-
+				// mapeval.cfg now stores maps directly under each gamemode.
+				// Legacy tier1/tier2 sections are intentionally ignored.
 				if (kv.GotoFirstSubKey(false))
 				{
-					do
-					{
-						char mapName[PLATFORM_MAX_PATH];
-						kv.GetSectionName(mapName, sizeof(mapName));
-						if (mapName[0])
-						{
-							char weightValue[32];
-							kv.GetString(NULL_STRING, weightValue, sizeof(weightValue), "");
-							int voteWeight = ParseMapEvalVoteWeight(weightValue);
-
-							maps.PushString(mapName);
-							g_MapEvalVoteWeights.SetValue(mapName, voteWeight);
-						}
-					}
-					while (kv.GotoNextKey(false));
-
 					kv.GoBack();
+					continue;
 				}
 
-				tiers.SetValue(tierName, view_as<int>(maps));
+				char weightValue[32];
+				kv.GetString(NULL_STRING, weightValue, sizeof(weightValue), "");
+				int voteWeight = ParseMapEvalVoteWeight(weightValue);
+
+				maps.PushString(mapName);
+				g_MapEvalVoteWeights.SetValue(mapName, voteWeight);
 			}
 			while (kv.GotoNextKey(false));
 
 			kv.GoBack();
 		}
 
-		g_MapEvalGamemodes.SetValue(gamemode, view_as<int>(tiers));
+		if (maps.Length > 0)
+		{
+			g_MapEvalGamemodes.SetValue(gamemode, view_as<int>(maps));
+		}
+		else
+		{
+			delete maps;
+		}
 	}
 	while (kv.GotoNextKey());
 
@@ -1782,21 +1757,9 @@ bool IsMapEvalExcludedByHistory(const char[] mapName)
 	return (g_OldMapList.FindString(mapName) != -1);
 }
 
-void BuildMapEvalTierPool(StringMap tiers, const char[] tierName, ArrayList pool, StringMap seen)
+void BuildMapEvalWeightPool(ArrayList maps, int requiredWeight, ArrayList pool, StringMap seen)
 {
-	if (tiers == null || pool == null || !tierName[0])
-	{
-		return;
-	}
-
-	int mapsValue;
-	if (!tiers.GetValue(tierName, mapsValue))
-	{
-		return;
-	}
-
-	ArrayList maps = view_as<ArrayList>(mapsValue);
-	if (maps == null)
+	if (maps == null || pool == null)
 	{
 		return;
 	}
@@ -1808,6 +1771,11 @@ void BuildMapEvalTierPool(StringMap tiers, const char[] tierName, ArrayList pool
 		TrimString(mapName);
 
 		if (!mapName[0])
+		{
+			continue;
+		}
+		int voteWeight = GetMapEvalVoteWeight(mapName);
+		if (voteWeight != requiredWeight)
 		{
 			continue;
 		}
@@ -1837,41 +1805,71 @@ void BuildMapEvalTierPool(StringMap tiers, const char[] tierName, ArrayList pool
 	}
 }
 
-void AddMapEvalVoteGroup(const char[] gamemode, ArrayList groupNames, ArrayList tier1Pools, ArrayList tier2Pools, StringMap seen)
+ArrayList FirstAvailableMapEvalPool(ArrayList first, ArrayList second, ArrayList third)
+{
+	if (first != null && first.Length > 0)
+	{
+		return first;
+	}
+	if (second != null && second.Length > 0)
+	{
+		return second;
+	}
+	if (third != null && third.Length > 0)
+	{
+		return third;
+	}
+	return null;
+}
+
+ArrayList SelectMapEvalWeightPool(ArrayList weight3Pool, ArrayList weight2Pool, ArrayList weight1Pool, bool preferHighWeight)
+{
+	if (preferHighWeight)
+	{
+		return FirstAvailableMapEvalPool(weight3Pool, weight2Pool, weight1Pool);
+	}
+	return FirstAvailableMapEvalPool(weight1Pool, weight2Pool, weight3Pool);
+}
+
+void AddMapEvalVoteGroup(const char[] gamemode, ArrayList groupNames, ArrayList weight3Pools, ArrayList weight2Pools, ArrayList weight1Pools, StringMap seen)
 {
 	if (!gamemode[0] || g_MapEvalGamemodes == null)
 	{
 		return;
 	}
 
-	int tiersValue;
-	if (!g_MapEvalGamemodes.GetValue(gamemode, tiersValue))
+	int mapsValue;
+	if (!g_MapEvalGamemodes.GetValue(gamemode, mapsValue))
 	{
 		return;
 	}
 
-	StringMap tiers = view_as<StringMap>(tiersValue);
-	if (tiers == null)
+	ArrayList maps = view_as<ArrayList>(mapsValue);
+	if (maps == null)
 	{
 		return;
 	}
 
-	ArrayList tier1Pool = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
-	ArrayList tier2Pool = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
+	ArrayList weight3Pool = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
+	ArrayList weight2Pool = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
+	ArrayList weight1Pool = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
 
-	BuildMapEvalTierPool(tiers, "tier1", tier1Pool, seen);
-	BuildMapEvalTierPool(tiers, "tier2", tier2Pool, seen);
+	BuildMapEvalWeightPool(maps, MAP_EVAL_MAX_VOTE_WEIGHT, weight3Pool, seen);
+	BuildMapEvalWeightPool(maps, 2, weight2Pool, seen);
+	BuildMapEvalWeightPool(maps, MAP_EVAL_DEFAULT_VOTE_WEIGHT, weight1Pool, seen);
 
-	if (tier1Pool.Length == 0 && tier2Pool.Length == 0)
+	if (weight3Pool.Length == 0 && weight2Pool.Length == 0 && weight1Pool.Length == 0)
 	{
-		delete tier1Pool;
-		delete tier2Pool;
+		delete weight3Pool;
+		delete weight2Pool;
+		delete weight1Pool;
 		return;
 	}
 
 	groupNames.PushString(gamemode);
-	tier1Pools.Push(view_as<int>(tier1Pool));
-	tier2Pools.Push(view_as<int>(tier2Pool));
+	weight3Pools.Push(view_as<int>(weight3Pool));
+	weight2Pools.Push(view_as<int>(weight2Pool));
+	weight1Pools.Push(view_as<int>(weight1Pool));
 }
 
 bool PopulateNextVoteFromMapEval()
@@ -1890,13 +1888,14 @@ bool PopulateNextVoteFromMapEval()
 	UpdateGameModeFromMap();
 
 	ArrayList groupNames = new ArrayList(ByteCountToCells(64));
-	ArrayList tier1Pools = new ArrayList();
-	ArrayList tier2Pools = new ArrayList();
+	ArrayList weight3Pools = new ArrayList();
+	ArrayList weight2Pools = new ArrayList();
+	ArrayList weight1Pools = new ArrayList();
 	StringMap seen = new StringMap();
 
 	if (g_GameMode[0])
 	{
-		AddMapEvalVoteGroup(g_GameMode, groupNames, tier1Pools, tier2Pools, seen);
+		AddMapEvalVoteGroup(g_GameMode, groupNames, weight3Pools, weight2Pools, weight1Pools, seen);
 	}
 
 	StringMapSnapshot snapshot = g_MapEvalGamemodes.Snapshot();
@@ -1909,7 +1908,7 @@ bool PopulateNextVoteFromMapEval()
 			continue;
 		}
 
-		AddMapEvalVoteGroup(gamemode, groupNames, tier1Pools, tier2Pools, seen);
+		AddMapEvalVoteGroup(gamemode, groupNames, weight3Pools, weight2Pools, weight1Pools, seen);
 	}
 	delete snapshot;
 	delete seen;
@@ -1919,33 +1918,11 @@ bool PopulateNextVoteFromMapEval()
 	while (groupNames.Length > 0 && g_NextMapList.Length < limit)
 	{
 		int groupIndex = GetRandomInt(0, groupNames.Length - 1);
-		ArrayList tier1Pool = view_as<ArrayList>(tier1Pools.Get(groupIndex));
-		ArrayList tier2Pool = view_as<ArrayList>(tier2Pools.Get(groupIndex));
-		ArrayList pool = null;
-
-		bool preferTier1 = (GetRandomInt(1, 100) <= 60);
-		if (preferTier1)
-		{
-			if (tier1Pool != null && tier1Pool.Length > 0)
-			{
-				pool = tier1Pool;
-			}
-			else if (tier2Pool != null && tier2Pool.Length > 0)
-			{
-				pool = tier2Pool;
-			}
-		}
-		else
-		{
-			if (tier2Pool != null && tier2Pool.Length > 0)
-			{
-				pool = tier2Pool;
-			}
-			else if (tier1Pool != null && tier1Pool.Length > 0)
-			{
-				pool = tier1Pool;
-			}
-		}
+		ArrayList weight3Pool = view_as<ArrayList>(weight3Pools.Get(groupIndex));
+		ArrayList weight2Pool = view_as<ArrayList>(weight2Pools.Get(groupIndex));
+		ArrayList weight1Pool = view_as<ArrayList>(weight1Pools.Get(groupIndex));
+		bool preferHighWeight = (GetRandomInt(1, 100) <= 60);
+		ArrayList pool = SelectMapEvalWeightPool(weight3Pool, weight2Pool, weight1Pool, preferHighWeight);
 
 		if (pool != null && pool.Length > 0)
 		{
@@ -1954,37 +1931,48 @@ bool PopulateNextVoteFromMapEval()
 			g_NextMapList.PushString(mapName);
 		}
 
-		if (tier1Pool != null)
+		if (weight3Pool != null)
 		{
-			delete tier1Pool;
+			delete weight3Pool;
 		}
-		if (tier2Pool != null)
+		if (weight2Pool != null)
 		{
-			delete tier2Pool;
+			delete weight2Pool;
+		}
+		if (weight1Pool != null)
+		{
+			delete weight1Pool;
 		}
 
 		groupNames.Erase(groupIndex);
-		tier1Pools.Erase(groupIndex);
-		tier2Pools.Erase(groupIndex);
+		weight3Pools.Erase(groupIndex);
+		weight2Pools.Erase(groupIndex);
+		weight1Pools.Erase(groupIndex);
 	}
 
-	for (int i = 0; i < tier1Pools.Length; i++)
+	for (int i = 0; i < weight3Pools.Length; i++)
 	{
-		ArrayList tier1Pool = view_as<ArrayList>(tier1Pools.Get(i));
-		ArrayList tier2Pool = view_as<ArrayList>(tier2Pools.Get(i));
-		if (tier1Pool != null)
+		ArrayList weight3Pool = view_as<ArrayList>(weight3Pools.Get(i));
+		ArrayList weight2Pool = view_as<ArrayList>(weight2Pools.Get(i));
+		ArrayList weight1Pool = view_as<ArrayList>(weight1Pools.Get(i));
+		if (weight3Pool != null)
 		{
-			delete tier1Pool;
+			delete weight3Pool;
 		}
-		if (tier2Pool != null)
+		if (weight2Pool != null)
 		{
-			delete tier2Pool;
+			delete weight2Pool;
+		}
+		if (weight1Pool != null)
+		{
+			delete weight1Pool;
 		}
 	}
 
 	delete groupNames;
-	delete tier1Pools;
-	delete tier2Pools;
+	delete weight3Pools;
+	delete weight2Pools;
+	delete weight1Pools;
 
 	return (g_NextMapList.Length > 0);
 }
