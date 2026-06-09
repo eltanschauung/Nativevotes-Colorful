@@ -2031,6 +2031,88 @@ bool CanVoteStart()
 	return !(g_WaitingForVote || g_HasVoteStarted);
 }
 
+bool IsWhitelistedNominationOwner(int owner)
+{
+	return owner > 0 && owner <= MaxClients && NativeVotePrefs_IsWhitelisted(owner);
+}
+
+int GetWhitelistedNominationInsertIndex()
+{
+	int insertIndex = 0;
+	while (insertIndex < g_NominateOwners.Length)
+	{
+		int existingOwner = g_NominateOwners.Get(insertIndex);
+		if (!IsWhitelistedNominationOwner(existingOwner))
+		{
+			break;
+		}
+
+		insertIndex++;
+	}
+
+	return insertIndex;
+}
+
+void MoveNominationToIndex(int sourceIndex, int targetIndex)
+{
+	if (sourceIndex == targetIndex)
+	{
+		return;
+	}
+
+	char map[PLATFORM_MAX_PATH];
+	g_NominateList.GetString(sourceIndex, map, sizeof(map));
+	int owner = g_NominateOwners.Get(sourceIndex);
+
+	if (sourceIndex > targetIndex)
+	{
+		for (int i = sourceIndex; i > targetIndex; i--)
+		{
+			char previousMap[PLATFORM_MAX_PATH];
+			g_NominateList.GetString(i - 1, previousMap, sizeof(previousMap));
+			g_NominateList.SetString(i, previousMap);
+			g_NominateOwners.Set(i, g_NominateOwners.Get(i - 1));
+		}
+	}
+	else
+	{
+		for (int i = sourceIndex; i < targetIndex; i++)
+		{
+			char nextMap[PLATFORM_MAX_PATH];
+			g_NominateList.GetString(i + 1, nextMap, sizeof(nextMap));
+			g_NominateList.SetString(i, nextMap);
+			g_NominateOwners.Set(i, g_NominateOwners.Get(i + 1));
+		}
+	}
+
+	g_NominateList.SetString(targetIndex, map);
+	g_NominateOwners.Set(targetIndex, owner);
+}
+
+void PromoteWhitelistedNomination(int index)
+{
+	if (index < 0 || index >= g_NominateOwners.Length || !IsWhitelistedNominationOwner(g_NominateOwners.Get(index)))
+	{
+		return;
+	}
+
+	int targetIndex = GetWhitelistedNominationInsertIndex();
+	if (targetIndex > index)
+	{
+		targetIndex = index;
+	}
+
+	MoveNominationToIndex(index, targetIndex);
+}
+
+void InsertNominationForOwner(const char[] map, int owner)
+{
+	int insertIndex = IsWhitelistedNominationOwner(owner) ? GetWhitelistedNominationInsertIndex() : g_NominateList.Length;
+	g_NominateList.PushString(map);
+	g_NominateOwners.Push(owner);
+	MoveNominationToIndex(g_NominateList.Length - 1, insertIndex);
+}
+
 NominateResult InternalNominateMap(char[] map, bool force, int owner)
 {
 	if (!IsMapValid(map))
@@ -2057,6 +2139,7 @@ NominateResult InternalNominateMap(char[] map, bool force, int owner)
 		Call_Finish();
 		
 		g_NominateList.SetString(index, map);
+		PromoteWhitelistedNomination(index);
 		return Nominate_Replaced;
 	}
 	
@@ -2086,8 +2169,7 @@ NominateResult InternalNominateMap(char[] map, bool force, int owner)
 		return Nominate_VoteFull;
 	}
 	
-	g_NominateList.PushString(map);
-	g_NominateOwners.Push(owner);
+	InsertNominationForOwner(map, owner);
 	
 	while (g_NominateList.Length > g_ConVars[mapvote_include].IntValue)
 	{
