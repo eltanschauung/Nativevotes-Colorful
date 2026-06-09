@@ -48,6 +48,7 @@
 #define REQUIRE_EXTENSIONS
 
 #include "nativevotes_statistics.inc"
+#include "nativevotes_vote_privileges.inc"
 
 #pragma semicolon 1
 #pragma newdecls required
@@ -150,6 +151,7 @@ public void OnPluginStart()
 	LoadTranslations("mapchooser.phrases");
 	LoadTranslations("common.phrases");
 	NativeVoteStats_Init();
+	NativeVotePrefs_Init(true);
 
 	KeyValues kv = new KeyValues("GameInfo");
 	kv.ImportFromFile("gameinfo.txt");
