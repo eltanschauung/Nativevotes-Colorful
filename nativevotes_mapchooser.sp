@@ -89,6 +89,7 @@ enum
 	mapvote_runoff,
 	mapvote_runoffpercent,
 	mapvote_mapeval_random,
+	nativevotes_emptymapchange,
 	mapcycle_auto,
 	mapcycle_exclude,
 	workshop_map_collection,
@@ -101,6 +102,7 @@ ConVar g_ConVars[MAX_CONVARS];
 
 Handle g_VoteTimer = null;
 Handle g_RetryTimer = null;
+Handle g_EmptyMapChangeTimer = null;
 
 // g_MapList stores unresolved names so we can resolve them after every map change in the workshop updates.
 // g_OldMapList and g_NextMapList are resolved. g_NominateList depends on the nominations implementation.
@@ -192,6 +194,7 @@ public void OnPluginStart()
 	g_ConVars[mapvote_runoff] 		 		= CreateConVar("sm_mapvote_runoff", "0", "Hold run of votes if winning choice is less than a certain margin.", _, true, 0.0, true, 1.0);
 	g_ConVars[mapvote_runoffpercent] 		= CreateConVar("sm_mapvote_runoffpercent", "50", "If winning choice has less than this percent of votes, hold a runoff.", _, true, 0.0, true, 100.0);
 	g_ConVars[mapvote_mapeval_random]		= CreateConVar("sm_mapvote_mapeval_random", "1", "Use configs/mapeval.cfg to choose random map vote options. If disabled, random options come from the map list.", _, true, 0.0, true, 1.0);
+	g_ConVars[nativevotes_emptymapchange]	= CreateConVar("sm_nativevotes_emptymapchange", "0", "If above 0, change to a random mapeval.cfg map when the server is empty for this many minutes.", _, true, 0.0);
 	g_ConVars[mapcycle_auto]         		= CreateConVar("sm_mapcycle_auto", "0", "Specifies whether or not to automatically populate the maps list.", _, true, 0.0, true, 1.0);
 	g_ConVars[mapcycle_exclude]      		= CreateConVar("sm_mapcycle_exclude", ".*test.*|background01|^tr.*$", "Specifies which maps shouldn't be automatically added with a regex pattern.");
 	if (engine != Engine_SDK2013 && engine == Engine_TF2)
@@ -202,6 +205,7 @@ public void OnPluginStart()
 
 	RegAdminCmd("sm_mapvote", Command_MapVote, ADMFLAG_CHANGEMAP, "Forces MapChooser to attempt to run a map vote now.");
 	RegAdminCmd("sm_setnextmap", Command_SetNextMap, ADMFLAG_CHANGEMAP, "sm_setnextmap <map>");
+	HookConVarChange(g_ConVars[nativevotes_emptymapchange], ConVarChanged_EmptyMapChange);
 
 	g_ConVars[mp_winlimit]       = FindConVar("mp_winlimit");
 	g_ConVars[mp_maxrounds]      = FindConVar("mp_maxrounds");
@@ -351,6 +355,7 @@ public void OnConfigsExecuted()
 
 	CreateNextVote();
 	SetupTimeleftTimer();
+	RestartEmptyMapChangeTimer();
 	
 	g_NominateList.Clear();
 	g_NominateOwners.Clear();
@@ -379,6 +384,7 @@ public void OnMapEnd()
 	
 	g_VoteTimer = null;
 	g_RetryTimer = null;
+	StopEmptyMapChangeTimer();
 	
 	char map[PLATFORM_MAX_PATH];
 	GetCurrentMap(map, sizeof(map));
@@ -388,6 +394,79 @@ public void OnMapEnd()
 	{
 		g_OldMapList.Erase(0);
 	}	
+}
+
+public void ConVarChanged_EmptyMapChange(ConVar convar, const char[] oldValue, const char[] newValue)
+{
+	RestartEmptyMapChangeTimer();
+}
+
+void StopEmptyMapChangeTimer()
+{
+	if (g_EmptyMapChangeTimer != null)
+	{
+		KillTimer(g_EmptyMapChangeTimer);
+		g_EmptyMapChangeTimer = null;
+	}
+}
+
+void RestartEmptyMapChangeTimer()
+{
+	StopEmptyMapChangeTimer();
+
+	float minutes = g_ConVars[nativevotes_emptymapchange].FloatValue;
+	if (minutes <= 0.0)
+	{
+		return;
+	}
+
+	g_EmptyMapChangeTimer = CreateTimer(minutes * 60.0, Timer_EmptyMapChange, _, TIMER_REPEAT | TIMER_FLAG_NO_MAPCHANGE);
+	LogMessage("[NativeVotes MapChooser] Empty map change enabled; checking every %.1f minutes.", minutes);
+}
+
+int CountConnectedHumans()
+{
+	int count = 0;
+	for (int client = 1; client <= MaxClients; client++)
+	{
+		if (IsClientConnected(client) && !IsFakeClient(client))
+		{
+			count++;
+		}
+	}
+
+	return count;
+}
+
+public Action Timer_EmptyMapChange(Handle timer)
+{
+	if (timer != g_EmptyMapChangeTimer)
+	{
+		return Plugin_Stop;
+	}
+
+	if (g_ConVars[nativevotes_emptymapchange].FloatValue <= 0.0)
+	{
+		g_EmptyMapChangeTimer = null;
+		return Plugin_Stop;
+	}
+
+	if (CountConnectedHumans() > 0)
+	{
+		return Plugin_Continue;
+	}
+
+	char nextMap[PLATFORM_MAX_PATH];
+	if (!CopyRandomMapEvalMap(nextMap, sizeof(nextMap)))
+	{
+		LogError("[NativeVotes MapChooser] Empty map change skipped: no valid mapeval.cfg maps available.");
+		return Plugin_Continue;
+	}
+
+	g_EmptyMapChangeTimer = null;
+	LogMessage("[NativeVotes MapChooser] Server empty for configured interval; changing to %s.", nextMap);
+	ForceChangeLevel(nextMap, "Server was empty for configured interval");
+	return Plugin_Stop;
 }
 
 public void OnClientDisconnect(int client)
@@ -1792,6 +1871,81 @@ void LoadMapEvalConfig()
 	while (kv.GotoNextKey());
 
 	delete kv;
+}
+
+bool CopyRandomMapEvalMap(char[] buffer, int maxlen)
+{
+	if (maxlen <= 0)
+	{
+		return false;
+	}
+
+	buffer[0] = '\0';
+
+	if (g_MapEvalGamemodes == null || g_MapEvalGamemodes.Size == 0)
+	{
+		return false;
+	}
+
+	UpdateCurrentMap();
+
+	ArrayList pool = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
+	StringMap seen = new StringMap();
+	StringMapSnapshot snapshot = g_MapEvalGamemodes.Snapshot();
+
+	char gamemode[64];
+	char mapName[PLATFORM_MAX_PATH];
+	for (int i = 0; i < snapshot.Length; i++)
+	{
+		snapshot.GetKey(i, gamemode, sizeof(gamemode));
+
+		int mapsValue;
+		if (!g_MapEvalGamemodes.GetValue(gamemode, mapsValue))
+		{
+			continue;
+		}
+
+		ArrayList maps = view_as<ArrayList>(mapsValue);
+		if (maps == null)
+		{
+			continue;
+		}
+
+		for (int mapIndex = 0; mapIndex < maps.Length; mapIndex++)
+		{
+			maps.GetString(mapIndex, mapName, sizeof(mapName));
+			TrimString(mapName);
+
+			if (!mapName[0]
+				|| (g_CurrentMap[0] && StrEqual(mapName, g_CurrentMap, false))
+				|| !IsMapValid(mapName))
+			{
+				continue;
+			}
+
+			int dummy;
+			if (seen.GetValue(mapName, dummy))
+			{
+				continue;
+			}
+
+			seen.SetValue(mapName, 1);
+			pool.PushString(mapName);
+		}
+	}
+
+	delete snapshot;
+	delete seen;
+
+	bool found = false;
+	if (pool.Length > 0)
+	{
+		pool.GetString(GetRandomInt(0, pool.Length - 1), buffer, maxlen);
+		found = true;
+	}
+
+	delete pool;
+	return found;
 }
 
 bool IsMapEvalExcludedByHistory(const char[] mapName)
