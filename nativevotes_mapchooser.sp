@@ -1774,6 +1774,78 @@ void InsertNominationForOwner(const char[] map, int owner)
 	MoveNominationToIndex(g_NominateList.Length - 1, insertIndex);
 }
 
+int FindLastNonWhitelistedNominationIndex(int protectedIndex)
+{
+	for (int i = g_NominateOwners.Length - 1; i >= 0; i--)
+	{
+		if (i == protectedIndex)
+		{
+			continue;
+		}
+
+		if (!IsWhitelistedNominationOwner(g_NominateOwners.Get(i)))
+		{
+			return i;
+		}
+	}
+
+	return -1;
+}
+
+int FindLastRemovableNominationIndex(int protectedIndex)
+{
+	for (int i = g_NominateOwners.Length - 1; i >= 0; i--)
+	{
+		if (i != protectedIndex)
+		{
+			return i;
+		}
+	}
+
+	return -1;
+}
+
+void RemoveNominationAtIndex(int index)
+{
+	if (index < 0 || index >= g_NominateList.Length)
+	{
+		return;
+	}
+
+	char oldmap[PLATFORM_MAX_PATH];
+	g_NominateList.GetString(index, oldmap, sizeof(oldmap));
+	Call_StartForward(g_NominationsResetForward);
+	Call_PushString(oldmap);
+	Call_PushCell(g_NominateOwners.Get(index));
+	Call_Finish();
+
+	g_NominateList.Erase(index);
+	g_NominateOwners.Erase(index);
+}
+
+void TrimNominationListToLimit(int limit, int protectedIndex)
+{
+	while (g_NominateList.Length > limit)
+	{
+		int removeIndex = FindLastNonWhitelistedNominationIndex(protectedIndex);
+		if (removeIndex == -1)
+		{
+			removeIndex = FindLastRemovableNominationIndex(protectedIndex);
+		}
+
+		if (removeIndex == -1)
+		{
+			return;
+		}
+
+		RemoveNominationAtIndex(removeIndex);
+		if (protectedIndex > removeIndex)
+		{
+			protectedIndex--;
+		}
+	}
+}
+
 NominateResult InternalNominateMap(char[] map, bool force, int owner)
 {
 	if (!IsMapValid(map))
@@ -1827,23 +1899,14 @@ NominateResult InternalNominateMap(char[] map, bool force, int owner)
 	
 	if (g_NominateList.Length >= maxIncludes && !force)
 	{
-		return Nominate_VoteFull;
+		if (!IsWhitelistedNominationOwner(owner) || FindLastNonWhitelistedNominationIndex(-1) == -1)
+		{
+			return Nominate_VoteFull;
+		}
 	}
 	
 	InsertNominationForOwner(map, owner);
-	
-	while (g_NominateList.Length > g_ConVars[mapvote_include].IntValue)
-	{
-		char oldmap[PLATFORM_MAX_PATH];
-		g_NominateList.GetString(0, oldmap, sizeof(oldmap));
-		Call_StartForward(g_NominationsResetForward);
-		Call_PushString(oldmap);
-		Call_PushCell(g_NominateOwners.Get(0));
-		Call_Finish();
-		
-		g_NominateList.Erase(0);
-		g_NominateOwners.Erase(0);
-	}
+	TrimNominationListToLimit(maxIncludes, g_NominateList.FindString(map));
 	
 	return Nominate_Added;
 }
