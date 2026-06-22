@@ -123,9 +123,13 @@ public void OnPluginStart()
 	RegConsoleCmd("sm_nr", Command_Nominate);
 	RegConsoleCmd("sm_unnominate", Command_Unnominate);
 	RegConsoleCmd("sm_un", Command_Unnominate);
+	RegConsoleCmd("sm_noms", Command_ShowNominations);
+	RegConsoleCmd("sm_nominations", Command_ShowNominations);
+	RegConsoleCmd("sm_ns", Command_ShowNominations);
 	
 	RegAdminCmd("sm_nominate_addmap", Command_Addmap, ADMFLAG_CHANGEMAP, "sm_nominate_addmap <mapname> - Forces a map to be on the next mapvote.");
 	RegAdminCmd("sm_reload_nominations", Command_ReloadNominations, ADMFLAG_RCON, "Reload the nomination map cycle in-place");
+	RegAdminCmd("sm_refresh_mapcycle", Command_ReloadNominations, ADMFLAG_RCON, "Force nativevotes nominations to re-read mapcycle.txt");
 
 	g_MapTrie = new StringMap();
 
@@ -190,15 +194,26 @@ public void OnLibraryRemoved(const char[] name)
 
 public void OnConfigsExecuted()
 {
-	if (ReadMapList(g_MapList, g_mapFileSerial, "nominations", MAPLIST_FLAG_CLEARARRAY|MAPLIST_FLAG_MAPSFOLDER) == null)
+	if (!ReloadNominationMapList(false))
 	{
-		if (g_mapFileSerial == -1)
-		{
-			SetFailState("Unable to create a valid map list.");
-		}
+		SetFailState("Unable to create a valid map list.");
 	}
-	
-	BuildMapMenu();	
+}
+
+bool ReloadNominationMapList(bool force)
+{
+	if (force)
+	{
+		g_mapFileSerial = -1;
+	}
+
+	if (ReadMapList(g_MapList, g_mapFileSerial, "nominations", MAPLIST_FLAG_CLEARARRAY|MAPLIST_FLAG_MAPSFOLDER) == null && g_mapFileSerial == -1)
+	{
+		return false;
+	}
+
+	BuildMapMenu();
+	return true;
 }
 
 public void OnNominationRemoved(const char[] map, int owner)
@@ -299,8 +314,54 @@ public Action Command_Addmap(int client, int args)
 
 Action Command_ReloadNominations(int client, int args)
 {
-    OnConfigsExecuted();
-    return Plugin_Handled;
+	if (!ReloadNominationMapList(true))
+	{
+		CReplyToCommand(client, "[{lightgreen}Nominations\x01] Unable to re-read mapcycle.txt.");
+		return Plugin_Handled;
+	}
+
+	CReplyToCommand(client, "[{lightgreen}Nominations\x01] Re-read mapcycle.txt. {green}%d\x01 maps are available for nomination.", g_MapList.Length);
+	return Plugin_Handled;
+}
+
+public Action Command_ShowNominations(int client, int args)
+{
+	ArrayList maps = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
+	ArrayList owners = new ArrayList();
+	GetNominatedMapList(maps, owners);
+
+	if (maps.Length <= 0)
+	{
+		CReplyToCommand(client, "[{lightgreen}Nominations\x01] No maps are currently nominated.");
+		delete owners;
+		delete maps;
+		return Plugin_Handled;
+	}
+
+	CReplyToCommand(client, "[{lightgreen}Nominations\x01] Current nominations, descending:");
+	for (int i = maps.Length - 1; i >= 0; i--)
+	{
+		char map[PLATFORM_MAX_PATH];
+		char displayName[PLATFORM_MAX_PATH];
+		maps.GetString(i, map, sizeof(map));
+		GetMapDisplayName(map, displayName, sizeof(displayName));
+
+		int owner = owners.Get(i);
+		if (owner > 0 && IsClientInGame(owner))
+		{
+			char ownerName[MAX_NAME_LENGTH + 32];
+			GetPlayerName(owner, ownerName, sizeof(ownerName));
+			CReplyToCommand(client, "[{lightgreen}Nominations\x01] #%d {green}%s\x01 by %s", i + 1, displayName, ownerName);
+		}
+		else
+		{
+			CReplyToCommand(client, "[{lightgreen}Nominations\x01] #%d {green}%s", i + 1, displayName);
+		}
+	}
+
+	delete owners;
+	delete maps;
+	return Plugin_Handled;
 }
 
 public void OnClientSayCommand_Post(int client, const char[] command, const char[] sArgs)
