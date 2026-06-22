@@ -91,6 +91,7 @@ enum
 	vote_delay,
 	mapvote_debug_logging,
 	mapvote_min_playtime_hours,
+	mapvote_min_playtime_players,
 
 	MAX_CONVARS
 };
@@ -271,6 +272,7 @@ public void OnPluginStart()
 	g_ConVars[vote_delay] 		 	   = CreateConVar("nativevotes_vote_delay", "30", "Sets the recommended time in between public votes", FCVAR_NONE, true, 0.0);
 	g_ConVars[mapvote_debug_logging]  = CreateConVar("nativevotes_mapvote_debug_logging", "0", "Log per-client TF2 map vote option/start/count diagnostics", FCVAR_NONE, true, 0.0, true, 1.0);
 	g_ConVars[mapvote_min_playtime_hours] = CreateConVar("nativevotes_mapvote_min_playtime_hours", "0", "Minimum Whaletracker playtime hours required for TF2 map votes to count. 0 disables the gate.", FCVAR_NONE, true, 0.0);
+	g_ConVars[mapvote_min_playtime_players] = CreateConVar("nativevotes_mapvote_min_playtime_players", "3", "Skip nativevotes_mapvote_min_playtime_hours when GetClientCount(false) is below this value. 0 disables the low-pop bypass.", FCVAR_NONE, true, 0.0, true, float(MAXPLAYERS));
 	g_ConVars[vote_delay].AddChangeHook(OnVoteDelayChange);
 
 	Game_InitializeCvars();
@@ -1213,6 +1215,38 @@ int GetMapVotePlaytimeHours()
 	return g_ConVars[mapvote_min_playtime_hours].IntValue;
 }
 
+int GetMapVotePlaytimeMinPlayers()
+{
+	if (g_ConVars[mapvote_min_playtime_players] == null)
+	{
+		return 0;
+	}
+
+	int minPlayers = g_ConVars[mapvote_min_playtime_players].IntValue;
+	return minPlayers > 0 ? minPlayers : 0;
+}
+
+bool ShouldBypassMapVotePlaytimeForLowPop(NativeVote vote)
+{
+	int minPlayers = GetMapVotePlaytimeMinPlayers();
+	if (minPlayers <= 0)
+	{
+		return false;
+	}
+
+	int playerCount = GetClientCount(false);
+	if (playerCount >= minPlayers)
+	{
+		return false;
+	}
+
+	if (ShouldLogMapVoteDebug(vote))
+	{
+		LogMessage("[NativeVotes MapVote Debug] playtime gate low-pop bypass: players=%d required_players=%d required_hours=%d", playerCount, minPlayers, GetMapVotePlaytimeHours());
+	}
+	return true;
+}
+
 bool IsWhaleTrackerPlaytimeGateAvailable()
 {
 	return LibraryExists("whaletracker") && GetFeatureStatus(FeatureType_Native, "WhaleTracker_HasPlaytimeHours") == FeatureStatus_Available;
@@ -1232,6 +1266,11 @@ bool ShouldCountClientVote(NativeVote vote, int client)
 {
 	int requiredHours = GetMapVotePlaytimeHours();
 	if (!IsMapChoiceVote(vote) || requiredHours <= 0)
+	{
+		return true;
+	}
+
+	if (ShouldBypassMapVotePlaytimeForLowPop(vote))
 	{
 		return true;
 	}
