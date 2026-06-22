@@ -754,6 +754,7 @@ void InitiateVote(MapChange when, ArrayList inputlist=null)
 	/* No input given - User our internal nominations and maplist */
 	if (inputlist == null)
 	{
+		NormalizeWhitelistedNominationOrder();
 		int nominateCount = g_NominateList.Length;
 		int voteSize = g_ConVars[mapvote_include].IntValue;
 		
@@ -1750,6 +1751,21 @@ void MoveNominationToIndex(int sourceIndex, int targetIndex)
 	g_NominateOwners.Set(targetIndex, owner);
 }
 
+void NormalizeWhitelistedNominationOrder()
+{
+	int targetIndex = 0;
+	for (int i = 0; i < g_NominateOwners.Length; i++)
+	{
+		if (!IsWhitelistedNominationOwner(g_NominateOwners.Get(i)))
+		{
+			continue;
+		}
+
+		MoveNominationToIndex(i, targetIndex);
+		targetIndex++;
+	}
+}
+
 void PromoteWhitelistedNomination(int index)
 {
 	if (index < 0 || index >= g_NominateOwners.Length || !IsWhitelistedNominationOwner(g_NominateOwners.Get(index)))
@@ -1860,6 +1876,7 @@ NominateResult InternalNominateMap(char[] map, bool force, int owner)
 	}
 	
 	int index;
+	NormalizeWhitelistedNominationOrder();
 
 	/* Look to replace an existing nomination by this client - Nominations made with owner = 0 aren't replaced */
 	if (owner && ((index = g_NominateOwners.FindValue(owner)) != -1))
@@ -2059,6 +2076,8 @@ public int Native_GetNominatedMapList(Handle plugin, int numParams)
 	
 	if (maparray == null)
 		return 0;
+
+	NormalizeWhitelistedNominationOrder();
 
 	char map[PLATFORM_MAX_PATH];
 
