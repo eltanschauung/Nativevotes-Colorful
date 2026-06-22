@@ -1916,10 +1916,7 @@ NominateResult InternalNominateMap(char[] map, bool force, int owner)
 	
 	if (g_NominateList.Length >= maxIncludes && !force)
 	{
-		if (!IsWhitelistedNominationOwner(owner) || FindLastNonWhitelistedNominationIndex(-1) == -1)
-		{
-			return Nominate_VoteFull;
-		}
+		return Nominate_VoteFull;
 	}
 	
 	InsertNominationForOwner(map, owner);
