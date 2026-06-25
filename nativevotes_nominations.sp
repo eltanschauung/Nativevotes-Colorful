@@ -35,6 +35,7 @@
 
 #include <sourcemod>
 #include <mapchooser>
+#include <morecolors>
 
 #undef REQUIRE_PLUGIN
 #include <nativevotes>
@@ -329,16 +330,32 @@ public Action Command_ShowNominations(int client, int args)
 	ArrayList maps = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
 	ArrayList owners = new ArrayList();
 	GetNominatedMapList(maps, owners);
+	bool replyToConsole = GetCmdReplySource() == SM_REPLY_TO_CONSOLE;
 
 	if (maps.Length <= 0)
 	{
-		CReplyToCommand(client, "[{lightgreen}Nominations\x01] No maps are currently nominated.");
+		if (replyToConsole)
+		{
+			CReplyToCommand(client, "[{lightgreen}Nominations\x01] No maps are currently nominated.");
+		}
+		else
+		{
+			CPrintToChatEx(client, client, "[{lightgreen}Nominations\x01] No maps are currently nominated.");
+		}
 		delete owners;
 		delete maps;
 		return Plugin_Handled;
 	}
 
-	CReplyToCommand(client, "[{lightgreen}Nominations\x01] Current nominations, descending:");
+	if (replyToConsole)
+	{
+		CReplyToCommand(client, "[{lightgreen}Nominations\x01] Current nominations, descending:");
+	}
+	else
+	{
+		CPrintToChatEx(client, client, "[{lightgreen}Nominations\x01] Current nominations, descending:");
+	}
+
 	for (int i = maps.Length - 1; i >= 0; i--)
 	{
 		char map[PLATFORM_MAX_PATH];
@@ -350,18 +367,47 @@ public Action Command_ShowNominations(int client, int args)
 		if (owner > 0 && IsClientInGame(owner))
 		{
 			char ownerName[MAX_NAME_LENGTH + 32];
-			GetPlayerName(owner, ownerName, sizeof(ownerName));
-			CReplyToCommand(client, "[{lightgreen}Nominations\x01] #%d {green}%s\x01 by %s", i + 1, displayName, ownerName);
+			GetNominationOwnerName(owner, ownerName, sizeof(ownerName));
+			if (replyToConsole)
+			{
+				CReplyToCommand(client, "[{lightgreen}Nominations\x01] #%d {green}%s\x01 by %s", i + 1, displayName, ownerName);
+			}
+			else
+			{
+				CPrintToChatEx(client, owner, "[{lightgreen}Nominations\x01] #%d {green}%s\x01 by %s", i + 1, displayName, ownerName);
+			}
 		}
 		else
 		{
-			CReplyToCommand(client, "[{lightgreen}Nominations\x01] #%d {green}%s", i + 1, displayName);
+			if (replyToConsole)
+			{
+				CReplyToCommand(client, "[{lightgreen}Nominations\x01] #%d {green}%s", i + 1, displayName);
+			}
+			else
+			{
+				CPrintToChatEx(client, client, "[{lightgreen}Nominations\x01] #%d {green}%s", i + 1, displayName);
+			}
 		}
 	}
 
 	delete owners;
 	delete maps;
 	return Plugin_Handled;
+}
+
+void GetNominationOwnerName(int owner, char[] buffer, int maxlen)
+{
+	buffer[0] = '\0';
+	if (GetFeatureStatus(FeatureType_Native, "Filters_GetChatName") == FeatureStatus_Available)
+	{
+		Filters_GetChatName(owner, buffer, maxlen);
+		if (buffer[0] != '\0')
+		{
+			return;
+		}
+	}
+
+	GetPlayerName(owner, buffer, maxlen);
 }
 
 public void OnClientSayCommand_Post(int client, const char[] command, const char[] sArgs)
