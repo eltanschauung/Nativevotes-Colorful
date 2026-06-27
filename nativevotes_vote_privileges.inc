@@ -3,125 +3,64 @@
 #endif
 #define _nativevotes_vote_privileges_included
 
-#include <clientprefs>
+#undef REQUIRE_PLUGIN
+#tryinclude <adminsdb_api>
+#define REQUIRE_PLUGIN
 
-#define NATIVEVOTE_PREF_WHITELIST_COOKIE "nativevotes_vote_whitelist"
-#define NATIVEVOTE_PREF_BLACKLIST_COOKIE "nativevotes_vote_blacklist"
-
-Handle g_NativeVoteWhitelistCookie = null;
-Handle g_NativeVoteBlacklistCookie = null;
-
-void NativeVotePrefs_Init(bool registerCommands)
+#if !defined _adminsdb_api_included
+stock int AdminsDB_GetClientWhitelistLevel(int client)
 {
-	g_NativeVoteWhitelistCookie = RegClientCookie(NATIVEVOTE_PREF_WHITELIST_COOKIE, "NativeVotes vote whitelist flag", CookieAccess_Private);
-	g_NativeVoteBlacklistCookie = RegClientCookie(NATIVEVOTE_PREF_BLACKLIST_COOKIE, "NativeVotes vote blacklist flag", CookieAccess_Private);
+	if (client || !client) {}
+	return 0;
+}
+#endif
 
-	if (registerCommands)
-	{
-		RegAdminCmd("sm_votewhitelist", Command_VoteWhitelist, ADMFLAG_GENERIC, "sm_votewhitelist <#userid|name> - Toggle vote whitelist status for a client.");
-		RegAdminCmd("sm_voteblacklist", Command_VoteBlacklist, ADMFLAG_GENERIC, "sm_voteblacklist <#userid|name> - Toggle vote blacklist status for a client.");
-	}
+stock void NativeVotePrefs_Init(bool registerCommands)
+{
+	if (registerCommands || !registerCommands) {}
 }
 
-bool NativeVotePrefs_IsCookieReady(int client)
+stock int NativeVotePrefs_GetClientLevel(int client)
 {
-	return client > 0
-		&& client <= MaxClients
-		&& IsClientInGame(client)
-		&& !IsFakeClient(client)
-		&& AreClientCookiesCached(client);
-}
-
-bool NativeVotePrefs_GetClientBool(int client, Handle cookie)
-{
-	if (cookie == null || !NativeVotePrefs_IsCookieReady(client))
+	if (client <= 0 || client > MaxClients || !IsClientInGame(client) || IsFakeClient(client))
 	{
-		return false;
+		return 0;
 	}
 
-	char value[8];
-	GetClientCookie(client, cookie, value, sizeof(value));
-	return StringToInt(value) != 0;
-}
-
-void NativeVotePrefs_SetClientBool(int client, Handle cookie, bool enabled)
-{
-	if (cookie == null || client <= 0 || client > MaxClients || !AreClientCookiesCached(client))
+	if (GetFeatureStatus(FeatureType_Native, "AdminsDB_GetClientWhitelistLevel") != FeatureStatus_Available)
 	{
-		return;
+		return 0;
 	}
 
-	SetClientCookie(client, cookie, enabled ? "1" : "0");
-}
-
-bool NativeVotePrefs_IsWhitelisted(int client)
-{
-	if (NativeVotePrefs_GetClientBool(client, g_NativeVoteBlacklistCookie))
+	int level = AdminsDB_GetClientWhitelistLevel(client);
+	if (level > 3)
 	{
-		return false;
+		return 3;
 	}
-
-	return NativeVotePrefs_GetClientBool(client, g_NativeVoteWhitelistCookie);
-}
-
-bool NativeVotePrefs_IsBlacklisted(int client)
-{
-	return NativeVotePrefs_GetClientBool(client, g_NativeVoteBlacklistCookie);
-}
-
-Action NativeVotePrefs_ToggleClientFlag(int client, int args, Handle cookie, const char[] commandName, const char[] label)
-{
-	if (args < 1)
+	if (level < -3)
 	{
-		ReplyToCommand(client, "[NativeVotes] Usage: %s <#userid|name>", commandName);
-		return Plugin_Handled;
+		return -3;
 	}
-
-	if (cookie == null)
-	{
-		ReplyToCommand(client, "[NativeVotes] Clientprefs cookie is not available.");
-		return Plugin_Handled;
-	}
-
-	char targetArg[64];
-	GetCmdArg(1, targetArg, sizeof(targetArg));
-
-	int target = FindTarget(client, targetArg, true, false);
-	if (target <= 0)
-	{
-		return Plugin_Handled;
-	}
-
-	if (!AreClientCookiesCached(target))
-	{
-		ReplyToCommand(client, "[NativeVotes] Clientprefs are not loaded for %N yet.", target);
-		return Plugin_Handled;
-	}
-
-	bool enabled = !NativeVotePrefs_GetClientBool(target, cookie);
-	NativeVotePrefs_SetClientBool(target, cookie, enabled);
-
-	ReplyToCommand(client, "[NativeVotes] %N vote %s %s.", target, label, enabled ? "enabled" : "disabled");
-	LogAction(client, target, "\"%L\" set vote %s for \"%L\" to %d", client, label, target, enabled ? 1 : 0);
-	return Plugin_Handled;
+	return level;
 }
 
-public Action Command_VoteWhitelist(int client, int args)
+stock bool NativeVotePrefs_IsWhitelisted(int client)
 {
-	return NativeVotePrefs_ToggleClientFlag(client, args, g_NativeVoteWhitelistCookie, "sm_votewhitelist", "whitelist");
+	return NativeVotePrefs_GetClientLevel(client) > 0;
 }
 
-public Action Command_VoteBlacklist(int client, int args)
+stock bool NativeVotePrefs_IsBlacklisted(int client)
 {
-	return NativeVotePrefs_ToggleClientFlag(client, args, g_NativeVoteBlacklistCookie, "sm_voteblacklist", "blacklist");
+	return NativeVotePrefs_GetClientLevel(client) < 0;
 }
 
-int NativeVotePrefs_GetMapVoteBonus(int client)
+stock int NativeVotePrefs_GetMapVoteBonus(int client)
 {
-	return NativeVotePrefs_IsWhitelisted(client) ? 1 : 0;
+	return NativeVotePrefs_GetClientLevel(client);
 }
 
-int NativeVotePrefs_GetRTVWeight(int client)
+stock int NativeVotePrefs_GetRTVWeight(int client)
 {
-	return NativeVotePrefs_IsWhitelisted(client) ? 2 : 1;
+	int weight = 1 + NativeVotePrefs_GetClientLevel(client);
+	return weight > 0 ? weight : 0;
 }

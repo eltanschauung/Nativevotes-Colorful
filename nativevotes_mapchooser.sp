@@ -277,6 +277,7 @@ public void OnPluginStart()
 public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max)
 {
 	RegPluginLibrary("mapchooser");	
+	MarkNativeAsOptional("AdminsDB_GetClientWhitelistLevel");
 	
 	CreateNative("NominateMap", Native_NominateMap);
 	CreateNative("RemoveNominationByMap", Native_RemoveNominationByMap);
@@ -1036,7 +1037,7 @@ int GetClientMapVoteWeight(const char[] map, int client)
 		weight += NativeVotePrefs_GetMapVoteBonus(client);
 	}
 
-	return weight;
+	return weight > 0 ? weight : 0;
 }
 
 void InitializeWeightedVoteItems(int num_items, const int[][] item_info, int[][] weighted_item_info)

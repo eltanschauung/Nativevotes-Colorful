@@ -70,6 +70,7 @@ public Plugin myinfo =
 
 public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max)
 {
+	MarkNativeAsOptional("AdminsDB_GetClientWhitelistLevel");
 	MarkNativeAsOptional("Filters_GetChatName");
 	MarkNativeAsOptional("WhaleTracker_AreStatsLoaded");
 	MarkNativeAsOptional("WhaleTracker_HasPlaytimeHours");
