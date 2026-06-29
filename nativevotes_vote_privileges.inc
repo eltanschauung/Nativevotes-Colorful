@@ -56,11 +56,16 @@ stock bool NativeVotePrefs_IsBlacklisted(int client)
 
 stock int NativeVotePrefs_GetMapVoteBonus(int client)
 {
-	return NativeVotePrefs_GetClientLevel(client);
+	return NativeVotePrefs_GetClientVoteWeight(client) - 1;
+}
+
+stock int NativeVotePrefs_GetClientVoteWeight(int client)
+{
+	int weight = 1 + NativeVotePrefs_GetClientLevel(client);
+	return weight > 0 ? weight : 0;
 }
 
 stock int NativeVotePrefs_GetRTVWeight(int client)
 {
-	int weight = 1 + NativeVotePrefs_GetClientLevel(client);
-	return weight > 0 ? weight : 0;
+	return NativeVotePrefs_GetClientVoteWeight(client);
 }

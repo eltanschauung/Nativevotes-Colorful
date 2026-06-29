@@ -1032,11 +1032,18 @@ bool IsMapVoteSpecialItem(const char[] map)
 int GetClientMapVoteWeight(const char[] map, int client)
 {
 	int weight = GetMapEvalVoteWeight(map);
-	if (map[0] && !IsMapVoteSpecialItem(map))
+	int clientWeight = NativeVotePrefs_GetClientVoteWeight(client);
+	if (clientWeight <= 0)
 	{
-		weight += NativeVotePrefs_GetMapVoteBonus(client);
+		return 0;
 	}
 
+	if (map[0] && IsMapVoteSpecialItem(map))
+	{
+		weight = MAP_EVAL_DEFAULT_VOTE_WEIGHT;
+	}
+
+	weight += clientWeight - 1;
 	return weight > 0 ? weight : 0;
 }
 
