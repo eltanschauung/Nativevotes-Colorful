@@ -214,6 +214,7 @@ bool ReloadNominationMapList(bool force)
 	}
 
 	BuildMapMenu();
+	SyncNominatedMapStatuses();
 	return true;
 }
 
@@ -327,6 +328,8 @@ Action Command_ReloadNominations(int client, int args)
 
 public Action Command_ShowNominations(int client, int args)
 {
+	SyncNominatedMapStatuses();
+
 	ArrayList maps = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
 	ArrayList owners = new ArrayList();
 	GetNominatedMapList(maps, owners);
@@ -449,6 +452,8 @@ public Action Command_Nominate(int client, int args)
 		CReplyToCommand(client, "[{lightgreen}Nominations\x01] Only admins can nominate maps.");
 		return Plugin_Handled;
 	}
+
+	SyncNominatedMapStatuses();
 	
 	ReplySource source = GetCmdReplySource();
 	char commandName[32];
@@ -640,7 +645,7 @@ int FindMatchingMaps(ArrayList mapList, ArrayList results, const char[] input)
 	int matches = 0;
 	char map[PLATFORM_MAX_PATH];
 
-	int maxmatches = g_ConVars[maxmatches].IntValue;
+	int maxMatches = g_ConVars[maxmatches].IntValue;
 
 	for (int i = 0; i < map_count; i++)
 	{
@@ -650,7 +655,7 @@ int FindMatchingMaps(ArrayList mapList, ArrayList results, const char[] input)
 			results.Push(i);
 			matches++;
 
-			if (maxmatches > 0 && matches >= maxmatches)
+			if (maxMatches > 0 && matches >= maxMatches)
 			{
 				break;
 			}
@@ -678,6 +683,7 @@ void AttemptNominate(int client, const char[] map, int size, bool isVoteMenu)
 	char displayName[PLATFORM_MAX_PATH];
 	GetMapDisplayName(mapname, displayName, sizeof(displayName));
 	Format(displayName, sizeof(displayName), "\x05%s\x01", displayName);
+	SyncNominatedMapStatuses();
 	
 	int status;
 	if (!g_MapTrie.GetValue(mapname, status))
@@ -768,8 +774,62 @@ void AttemptNominate(int client, const char[] map, int size, bool isVoteMenu)
 
 void OpenNominationMenu(int client)
 {
+	SyncNominatedMapStatuses();
 	g_MapMenu.SetTitle("%t", "Nominate Title", client);
 	g_MapMenu.Display(client, MENU_TIME_FOREVER);
+}
+
+void SyncNominatedMapStatuses()
+{
+	if (g_MapList == null || g_MapTrie == null)
+	{
+		return;
+	}
+
+	ClearNominatedMapStatuses();
+
+	ArrayList nominatedMaps = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
+	GetNominatedMapList(nominatedMaps);
+
+	char map[PLATFORM_MAX_PATH];
+	char resolvedMap[PLATFORM_MAX_PATH];
+	for (int i = 0; i < nominatedMaps.Length; i++)
+	{
+		nominatedMaps.GetString(i, map, sizeof(map));
+		if (FindMap(map, resolvedMap, sizeof(resolvedMap)) == FindMap_NotFound)
+		{
+			strcopy(resolvedMap, sizeof(resolvedMap), map);
+		}
+
+		int status;
+		if (g_MapTrie.GetValue(resolvedMap, status))
+		{
+			g_MapTrie.SetValue(resolvedMap, MAPSTATUS_DISABLED|MAPSTATUS_EXCLUDE_NOMINATED);
+		}
+	}
+
+	delete nominatedMaps;
+}
+
+void ClearNominatedMapStatuses()
+{
+	char map[PLATFORM_MAX_PATH];
+	char resolvedMap[PLATFORM_MAX_PATH];
+	for (int i = 0; i < g_MapList.Length; i++)
+	{
+		g_MapList.GetString(i, map, sizeof(map));
+		if (FindMap(map, resolvedMap, sizeof(resolvedMap)) == FindMap_NotFound)
+		{
+			continue;
+		}
+
+		int status;
+		if (g_MapTrie.GetValue(resolvedMap, status)
+			&& (status & MAPSTATUS_EXCLUDE_NOMINATED) == MAPSTATUS_EXCLUDE_NOMINATED)
+		{
+			g_MapTrie.SetValue(resolvedMap, MAPSTATUS_ENABLED);
+		}
+	}
 }
 
 void BuildMapMenu()
