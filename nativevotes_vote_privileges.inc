@@ -61,8 +61,8 @@ stock int NativeVotePrefs_GetMapVoteBonus(int client)
 
 stock int NativeVotePrefs_GetClientVoteWeight(int client)
 {
-	int weight = 1 + NativeVotePrefs_GetClientLevel(client);
-	return weight > 0 ? weight : 0;
+	int level = NativeVotePrefs_GetClientLevel(client);
+	return level > 0 ? 1 + level : 1;
 }
 
 stock int NativeVotePrefs_GetRTVWeight(int client)
