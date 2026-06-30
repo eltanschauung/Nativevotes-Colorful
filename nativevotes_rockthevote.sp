@@ -85,6 +85,7 @@ enum
 	interval,
 	changetime,
 	postvoteaction,
+	connectdelay,
 
 	MAX_CONVARS
 }
@@ -121,6 +122,7 @@ public void OnPluginStart()
 	g_ConVars[interval] 	  = CreateConVar("sm_rtv_interval", "240.0", "Time (in seconds) after a failed RTV before another can be held", 0, true, 0.00);
 	g_ConVars[changetime] 	  = CreateConVar("sm_rtv_changetime", "0", "When to change the map after a succesful RTV: 0 - Instant, 1 - RoundEnd, 2 - MapEnd", _, true, 0.0, true, 2.0);
 	g_ConVars[postvoteaction] = CreateConVar("sm_rtv_postvoteaction", "0", "What to do with RTV's after a mapvote has completed. 0 - Allow, success = instant change, 1 - Deny", _, true, 0.0, true, 1.0);
+	g_ConVars[connectdelay] = CreateConVar("sm_rtv_connect_delay", "60", "Seconds a client must be connected before they can use RTV. 0 disables the gate.", _, true, 0.0, true, 3600.0);
 	g_MapVoteMinPlaytimeHours = FindConVar("nativevotes_mapvote_min_playtime_hours");
 	
 	RegConsoleCmd("sm_rtv", Command_RTV);
@@ -402,6 +404,17 @@ void AttemptRTV(int client, bool isVoteMenu=false)
 		return;
 	}
 
+	int connectDelayRemaining = GetRTVConnectDelayRemaining(client);
+	if (connectDelayRemaining > 0)
+	{
+		CReplyToCommand(client, "[{lightgreen}Rock The Vote\x01] You can use {gold}!rtv{default} in {gold}%d seconds!", connectDelayRemaining);
+		if (isVoteMenu && g_NativeVotes)
+		{
+			NativeVotes_DisplayCallVoteFail(client, NativeVotesCallFail_Failed, connectDelayRemaining);
+		}
+		return;
+	}
+
 	RecalculateRTVVoters();
 
 	if (!IsRTVEligibleClient(client))
@@ -454,6 +467,18 @@ public Action Timer_DelayRTV(Handle timer)
 	g_RTVAllowed = true;
 
 	return Plugin_Continue;
+}
+
+int GetRTVConnectDelayRemaining(int client)
+{
+	int connectDelay = g_ConVars[connectdelay].IntValue;
+	if (connectDelay <= 0 || client <= 0 || client > MaxClients || !IsClientConnected(client))
+	{
+		return 0;
+	}
+
+	int remaining = connectDelay - RoundToFloor(GetClientTime(client));
+	return remaining > 0 ? remaining : 0;
 }
 
 void EnsureRTVVoterRefreshTimer()
@@ -555,6 +580,13 @@ void RecalculateRTVVoters(int excludedClient = 0)
 		}
 
 		if (!IsClientInGame(client) || IsFakeClient(client))
+		{
+			g_Voted[client] = false;
+			g_RTVVoteWeight[client] = 0;
+			continue;
+		}
+
+		if (GetRTVConnectDelayRemaining(client) > 0)
 		{
 			g_Voted[client] = false;
 			g_RTVVoteWeight[client] = 0;
