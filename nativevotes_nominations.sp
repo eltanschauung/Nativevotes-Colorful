@@ -463,7 +463,7 @@ public Action Command_Nominate(int client, int args)
 	{
 		if (StrEqual(commandName, "sm_nr", false))
 		{
-			QueueRandomNomination(client);
+			OpenRandomNominationMenu(client);
 			return Plugin_Handled;
 		}
 
@@ -777,6 +777,48 @@ void OpenNominationMenu(int client)
 	SyncNominatedMapStatuses();
 	g_MapMenu.SetTitle("%t", "Nominate Title", client);
 	g_MapMenu.Display(client, MENU_TIME_FOREVER);
+}
+
+void OpenRandomNominationMenu(int client)
+{
+	if (g_MapList == null || g_MapList.Length == 0)
+	{
+		CReplyToCommand(client, "[{lightgreen}Nominations\x01] No maps available to nominate.");
+		return;
+	}
+
+	SyncNominatedMapStatuses();
+
+	Menu menu = new Menu(MenuHandler_MapSelect, MENU_ACTIONS_DEFAULT|MenuAction_DrawItem|MenuAction_DisplayItem);
+	menu.SetTitle("%t", "Nominate Title", client);
+	menu.ExitButton = true;
+
+	ArrayList indices = new ArrayList();
+	for (int i = 0; i < g_MapList.Length; i++)
+	{
+		indices.Push(i);
+	}
+
+	for (int i = indices.Length - 1; i > 0; i--)
+	{
+		int swapIndex = GetRandomInt(0, i);
+		int current = indices.Get(i);
+		indices.Set(i, indices.Get(swapIndex));
+		indices.Set(swapIndex, current);
+	}
+
+	char map[PLATFORM_MAX_PATH];
+	char displayName[PLATFORM_MAX_PATH];
+	for (int i = 0; i < indices.Length; i++)
+	{
+		g_MapList.GetString(indices.Get(i), map, sizeof(map));
+		FindMap(map, map, sizeof(map));
+		GetMapDisplayName(map, displayName, sizeof(displayName));
+		menu.AddItem(map, displayName);
+	}
+
+	delete indices;
+	menu.Display(client, MENU_TIME_FOREVER);
 }
 
 void SyncNominatedMapStatuses()
