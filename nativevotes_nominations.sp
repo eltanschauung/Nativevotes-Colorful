@@ -80,6 +80,7 @@ ConVar g_ConVars[MAX_CONVARS];
 
 Menu g_MapMenu = null;
 ArrayList g_MapList = null;
+ArrayList g_RandomNominationList = null;
 int g_mapFileSerial = -1;
 
 #define MAPSTATUS_ENABLED  		   	(1<<0)
@@ -96,6 +97,7 @@ bool g_RegisteredMenusChangeLevel = false;
 bool g_RegisteredMenusNextLevel = false;
 
 #define LIBRARY "nativevotes"
+#define RANDOM_NOMINATION_MENU_SIZE 50
 static const float RANDOM_NOMINATION_DELAY = 5.0;
 
 Handle g_hRandomNominateTimer[MAXPLAYERS + 1];
@@ -109,6 +111,7 @@ public void OnPluginStart()
 	NativeVoteStats_Init();
 	
 	g_MapList = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
+	g_RandomNominationList = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
 
 	g_ConVars[excludeold] 	  	 = CreateConVar("sm_nominate_excludeold", "1", "Specifies if the current map should be excluded from the Nominations list", _, true, 0.0, true, 1.0);
 	g_ConVars[excludecurrent] 	 = CreateConVar("sm_nominate_excludecurrent", "1", "Specifies if the MapChooser excluded maps should also be excluded from Nominations", _, true, 0.0, true, 1.0);
@@ -145,6 +148,7 @@ public void OnPluginStart()
 public void OnPluginEnd()
 {
 	RemoveVoteHandler();
+	delete g_RandomNominationList;
 }
 
 public void OnAllPluginsLoaded()
@@ -215,6 +219,7 @@ bool ReloadNominationMapList(bool force)
 
 	BuildMapMenu();
 	SyncNominatedMapStatuses();
+	BuildRandomNominationList();
 	return true;
 }
 
@@ -781,17 +786,40 @@ void OpenNominationMenu(int client)
 
 void OpenRandomNominationMenu(int client)
 {
-	if (g_MapList == null || g_MapList.Length == 0)
+	if (g_RandomNominationList == null || g_RandomNominationList.Length == 0)
 	{
 		CReplyToCommand(client, "[{lightgreen}Nominations\x01] No maps available to nominate.");
 		return;
 	}
 
-	SyncNominatedMapStatuses();
-
 	Menu menu = new Menu(MenuHandler_MapSelect, MENU_ACTIONS_DEFAULT|MenuAction_DrawItem|MenuAction_DisplayItem);
-	menu.SetTitle("%t", "Nominate Title", client);
+	menu.SetTitle("Random maps:");
 	menu.ExitButton = true;
+
+	char map[PLATFORM_MAX_PATH];
+	char displayName[PLATFORM_MAX_PATH];
+	for (int i = 0; i < g_RandomNominationList.Length; i++)
+	{
+		g_RandomNominationList.GetString(i, map, sizeof(map));
+		GetMapDisplayName(map, displayName, sizeof(displayName));
+		menu.AddItem(map, displayName);
+	}
+
+	menu.Display(client, MENU_TIME_FOREVER);
+}
+
+void BuildRandomNominationList()
+{
+	if (g_RandomNominationList == null)
+	{
+		g_RandomNominationList = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
+	}
+	g_RandomNominationList.Clear();
+
+	if (g_MapList == null || g_MapList.Length == 0)
+	{
+		return;
+	}
 
 	ArrayList indices = new ArrayList();
 	for (int i = 0; i < g_MapList.Length; i++)
@@ -808,17 +836,15 @@ void OpenRandomNominationMenu(int client)
 	}
 
 	char map[PLATFORM_MAX_PATH];
-	char displayName[PLATFORM_MAX_PATH];
-	for (int i = 0; i < indices.Length; i++)
+	int limit = indices.Length < RANDOM_NOMINATION_MENU_SIZE ? indices.Length : RANDOM_NOMINATION_MENU_SIZE;
+	for (int i = 0; i < limit; i++)
 	{
 		g_MapList.GetString(indices.Get(i), map, sizeof(map));
 		FindMap(map, map, sizeof(map));
-		GetMapDisplayName(map, displayName, sizeof(displayName));
-		menu.AddItem(map, displayName);
+		g_RandomNominationList.PushString(map);
 	}
 
 	delete indices;
-	menu.Display(client, MENU_TIME_FOREVER);
 }
 
 void SyncNominatedMapStatuses()
