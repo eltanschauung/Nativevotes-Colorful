@@ -127,6 +127,8 @@ public void OnPluginStart()
 	
 	RegConsoleCmd("sm_rtv", Command_RTV);
 	RegConsoleCmd("sm_rockthevote", Command_RTV);
+	RegConsoleCmd("sm_srtv", Command_SilentRTV);
+	RegConsoleCmd("sm_silentrtv", Command_SilentRTV);
 	RegConsoleCmd("sm_unrtv", Command_UnRTV);
 	RegAdminCmd("sm_forcertv", Command_ForceRTV, ADMFLAG_CHANGEMAP);
 	RegAdminCmd("sm_resetrtv", Command_ResetRTV, ADMFLAG_CHANGEMAP);
@@ -284,6 +286,15 @@ public void OnClientSayCommand_Post(int client, const char[] command, const char
 		SetCmdReplySource(old);
 	}
 
+	if (strcmp(sArgs, "srtv", false) == 0 || strcmp(sArgs, "silentrtv", false) == 0)
+	{
+		ReplySource old = SetCmdReplySource(SM_REPLY_TO_CHAT);
+
+		Command_SilentRTV(client, 0);
+
+		SetCmdReplySource(old);
+	}
+
 	if (strcmp(sArgs, "unrtv", false) == 0)
 	{
 		ReplySource old = SetCmdReplySource(SM_REPLY_TO_CHAT);
@@ -303,6 +314,18 @@ public Action Command_RTV(int client, int args)
 	
 	AttemptRTV(client);
 	
+	return Plugin_Handled;
+}
+
+public Action Command_SilentRTV(int client, int args)
+{
+	if (!client)
+	{
+		return Plugin_Handled;
+	}
+
+	AttemptRTV(client, false, true);
+
 	return Plugin_Handled;
 }
 
@@ -371,7 +394,7 @@ void AttemptUnRTV(int client)
 	CPrintToChatAllEx(client, "[{lightgreen}Rock The Vote\x01] %s has removed their RTV. (%d/%d needed)", name, g_Votes, g_VotesNeeded);
 }
 
-void AttemptRTV(int client, bool isVoteMenu=false)
+void AttemptRTV(int client, bool isVoteMenu=false, bool silent=false)
 {
 	if (!g_RTVAllowed || (g_ConVars[postvoteaction].IntValue == 1 && HasEndOfMapVoteFinished()))
 	{
@@ -451,9 +474,16 @@ void AttemptRTV(int client, bool isVoteMenu=false)
 	g_Votes += voteWeight;
 	g_Voted[client] = true;
 	g_RTVVoteWeight[client] = voteWeight;
-	NativeVoteStats_LogEvent("rtv", "", client, -1, g_Votes, g_VotesNeeded, g_Voters, "");
+	NativeVoteStats_LogEvent(silent ? "silent_rtv" : "rtv", "", client, -1, g_Votes, g_VotesNeeded, g_Voters, "");
 	
-	CPrintToChatAllEx(client, "[{lightgreen}Rock The Vote\x01] %t", "RTV Requested", name, g_Votes, g_VotesNeeded);
+	if (silent)
+	{
+		CReplyToCommand(client, "[{lightgreen}Rock The Vote\x01] Silent RTV counted. (%d/%d needed)", g_Votes, g_VotesNeeded);
+	}
+	else
+	{
+		CPrintToChatAllEx(client, "[{lightgreen}Rock The Vote\x01] %t", "RTV Requested", name, g_Votes, g_VotesNeeded);
+	}
 	
 	if (g_Votes >= g_VotesNeeded)
 	{
