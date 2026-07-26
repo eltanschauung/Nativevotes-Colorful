@@ -312,7 +312,19 @@ public Action Command_RTV(int client, int args)
 		return Plugin_Handled;
 	}
 	
-	AttemptRTV(client);
+	int requestedWeight = 0;
+	if (args > 0)
+	{
+		char value[16];
+		GetCmdArg(1, value, sizeof(value));
+		if (!StringToIntEx(value, requestedWeight) || requestedWeight <= 0)
+		{
+			CReplyToCommand(client, "[{lightgreen}Rock The Vote\x01] Usage: {gold}!rtv [vote value]");
+			return Plugin_Handled;
+		}
+	}
+
+	AttemptRTV(client, false, false, requestedWeight);
 	
 	return Plugin_Handled;
 }
@@ -394,7 +406,7 @@ void AttemptUnRTV(int client)
 	CPrintToChatAllEx(client, "[{lightgreen}Rock The Vote\x01] %s has removed their RTV. (%d/%d needed)", name, g_Votes, g_VotesNeeded);
 }
 
-void AttemptRTV(int client, bool isVoteMenu=false, bool silent=false)
+void AttemptRTV(int client, bool isVoteMenu=false, bool silent=false, int requestedWeight=0)
 {
 	if (!g_RTVAllowed || (g_ConVars[postvoteaction].IntValue == 1 && HasEndOfMapVoteFinished()))
 	{
@@ -470,7 +482,14 @@ void AttemptRTV(int client, bool isVoteMenu=false, bool silent=false)
 	char name[MAX_NAME_LENGTH];
 	GetPlayerName(client, name, sizeof(name));
 
-	int voteWeight = NativeVotePrefs_GetRTVWeight(client);
+	int maximumVoteWeight = NativeVotePrefs_GetRTVWeight(client);
+	if (requestedWeight > maximumVoteWeight)
+	{
+		CReplyToCommand(client, "[{lightgreen}Rock The Vote\x01] Your maximum RTV value is {gold}%d{default}.", maximumVoteWeight);
+		return;
+	}
+
+	int voteWeight = requestedWeight > 0 ? requestedWeight : maximumVoteWeight;
 	g_Votes += voteWeight;
 	g_Voted[client] = true;
 	g_RTVVoteWeight[client] = voteWeight;
