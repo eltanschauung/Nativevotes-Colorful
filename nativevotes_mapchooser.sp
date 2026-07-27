@@ -134,8 +134,6 @@ int g_winCount[MAX_TEAMS];
 
 #define VOTE_EXTEND 	"##extend##"
 #define VOTE_DONTCHANGE "##dontchange##"
-#define MAPVOTE_DISPLAYED_VOTE_COUNT_MAX 12
-
 // Libraries
 bool g_NativeVotes;
 bool g_RestInPawn;
@@ -1003,9 +1001,10 @@ public void Handler_VoteFinishedGeneric(Menu menu, int num_votes, int num_client
 
 int GetDisplayedMapVoteCount(int voteCount)
 {
-	if (voteCount > MAPVOTE_DISPLAYED_VOTE_COUNT_MAX)
+	int clientCount = GetClientCount(false);
+	if (voteCount > clientCount)
 	{
-		return MAPVOTE_DISPLAYED_VOTE_COUNT_MAX;
+		return clientCount;
 	}
 	return voteCount;
 }
