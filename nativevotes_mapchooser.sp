@@ -214,7 +214,7 @@ public void OnPluginStart()
 	g_ConVars[mapvote_runoff] 		 		= CreateConVar("sm_mapvote_runoff", "0", "Hold run of votes if winning choice is less than a certain margin.", _, true, 0.0, true, 1.0);
 	g_ConVars[mapvote_runoffpercent] 		= CreateConVar("sm_mapvote_runoffpercent", "50", "If winning choice has less than this percent of votes, hold a runoff.", _, true, 0.0, true, 100.0);
 	g_ConVars[mapvote_mapeval_random]		= CreateConVar("sm_mapvote_mapeval_random", "1", "Use configs/mapeval.cfg to choose random map vote options. If disabled, random options come from the map list.", _, true, 0.0, true, 1.0);
-	g_ConVars[nativevotes_emptymapchange]	= CreateConVar("sm_nativevotes_emptymapchange", "0", "If above 0, change to a random mapeval.cfg map when the server is empty for this many minutes.", _, true, 0.0);
+	g_ConVars[nativevotes_emptymapchange]	= CreateConVar("sm_nativevotes_emptymapchange", "30", "If above 0, change to a random mapeval.cfg map when the server is empty for this many minutes.", _, true, 0.0);
 	g_ConVars[mapcycle_auto]         		= CreateConVar("sm_mapcycle_auto", "0", "Specifies whether or not to automatically populate the maps list.", _, true, 0.0, true, 1.0);
 	g_ConVars[mapcycle_exclude]      		= CreateConVar("sm_mapcycle_exclude", ".*test.*|background01|^tr.*$", "Specifies which maps shouldn't be automatically added with a regex pattern.");
 	if (engine != Engine_SDK2013 && engine == Engine_TF2)
