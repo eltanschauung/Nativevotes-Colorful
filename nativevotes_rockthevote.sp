@@ -55,6 +55,8 @@ native bool WhaleTracker_AreStatsLoaded(int client);
 native bool WhaleTracker_HasPlaytimeHours(int client, int hours);
 
 #define RTV_VOTER_REFRESH_INTERVAL 5.0
+#define RTV_COMMAND_COOLDOWN_MAX 15
+#define RTV_COMMAND_COOLDOWN_RESET 30.0
 
 #pragma semicolon 1
 #pragma newdecls required
@@ -100,6 +102,9 @@ int g_Votes = 0;							// Total number of "say rtv" votes
 int g_VotesNeeded = 0;						// Necessary votes before map vote begins. (voters * percent_needed)
 bool g_Voted[MAXPLAYERS+1] = {false, ...};
 int g_RTVVoteWeight[MAXPLAYERS+1] = {0, ...};
+int g_RTVCommandCooldownSeconds[MAXPLAYERS+1] = {0, ...};
+float g_RTVCommandCooldownUntil[MAXPLAYERS+1] = {0.0, ...};
+float g_RTVCommandLastAttempt[MAXPLAYERS+1] = {0.0, ...};
 
 bool g_InChange = false;
 
@@ -225,6 +230,7 @@ public void OnMapEnd()
 	ResetRTV();
 	g_VotesNeeded = 0;
 	g_InChange = false;
+	ResetRTVCommandCooldowns();
 }
 
 public void OnConfigsExecuted()
@@ -254,6 +260,9 @@ public void OnClientDisconnect(int client)
 {	
 	g_Voted[client] = false;
 	g_RTVVoteWeight[client] = 0;
+	g_RTVCommandCooldownSeconds[client] = 0;
+	g_RTVCommandCooldownUntil[client] = 0.0;
+	g_RTVCommandLastAttempt[client] = 0.0;
 	RecalculateRTVVoters(client);
 	
 	if (g_Votes && 
@@ -286,11 +295,20 @@ public void OnClientSayCommand_Post(int client, const char[] command, const char
 		SetCmdReplySource(old);
 	}
 
-	if (strcmp(sArgs, "srtv", false) == 0 || strcmp(sArgs, "silentrtv", false) == 0)
+	char silentParts[3][16];
+	int silentPartCount = ExplodeString(sArgs, " ", silentParts, sizeof(silentParts), sizeof(silentParts[]));
+	if (silentPartCount > 0 && (StrEqual(silentParts[0], "srtv", false) || StrEqual(silentParts[0], "silentrtv", false)))
 	{
 		ReplySource old = SetCmdReplySource(SM_REPLY_TO_CHAT);
-
-		Command_SilentRTV(client, 0);
+		int requestedWeight = 0;
+		if (silentPartCount > 2 || (silentPartCount == 2 && (!StringToIntEx(silentParts[1], requestedWeight) || requestedWeight <= 0)))
+		{
+			CReplyToCommand(client, "[{lightgreen}Rock The Vote\x01] Usage: {gold}srtv [vote value]");
+		}
+		else if (CanUseRequestedSilentRTVWeight(client, requestedWeight) && CheckRTVCommandCooldown(client))
+		{
+			AttemptRTV(client, false, true, requestedWeight);
+		}
 
 		SetCmdReplySource(old);
 	}
@@ -323,6 +341,10 @@ public Action Command_RTV(int client, int args)
 			return Plugin_Handled;
 		}
 	}
+	if (!CheckRTVCommandCooldown(client))
+	{
+		return Plugin_Handled;
+	}
 
 	AttemptRTV(client, false, false, requestedWeight);
 	
@@ -336,7 +358,24 @@ public Action Command_SilentRTV(int client, int args)
 		return Plugin_Handled;
 	}
 
-	AttemptRTV(client, false, true);
+	int requestedWeight = 0;
+	if (args > 0)
+	{
+		char value[16];
+		GetCmdArg(1, value, sizeof(value));
+		if (!StringToIntEx(value, requestedWeight) || requestedWeight <= 0)
+		{
+			CReplyToCommand(client, "[{lightgreen}Rock The Vote\x01] Usage: {gold}!srtv [vote value]");
+			return Plugin_Handled;
+		}
+	}
+
+	if (!CanUseRequestedSilentRTVWeight(client, requestedWeight) || !CheckRTVCommandCooldown(client))
+	{
+		return Plugin_Handled;
+	}
+
+	AttemptRTV(client, false, true, requestedWeight);
 
 	return Plugin_Handled;
 }
@@ -348,9 +387,60 @@ public Action Command_UnRTV(int client, int args)
 		return Plugin_Handled;
 	}
 
-	AttemptUnRTV(client);
+	if (CheckRTVCommandCooldown(client))
+	{
+		AttemptUnRTV(client);
+	}
 
 	return Plugin_Handled;
+}
+
+bool CanUseRequestedSilentRTVWeight(int client, int requestedWeight)
+{
+	if (requestedWeight <= 0 || NativeVotePrefs_IsWhitelisted(client))
+	{
+		return true;
+	}
+
+	CReplyToCommand(client, "[{lightgreen}Rock The Vote\x01] Only whitelisted clients can set a silent RTV value.");
+	return false;
+}
+
+bool CheckRTVCommandCooldown(int client)
+{
+	float now = GetGameTime();
+	if (g_RTVCommandLastAttempt[client] <= 0.0 || now - g_RTVCommandLastAttempt[client] >= RTV_COMMAND_COOLDOWN_RESET)
+	{
+		g_RTVCommandCooldownSeconds[client] = 0;
+		g_RTVCommandCooldownUntil[client] = 0.0;
+	}
+
+	g_RTVCommandLastAttempt[client] = now;
+	g_RTVCommandCooldownSeconds[client]++;
+	if (g_RTVCommandCooldownSeconds[client] > RTV_COMMAND_COOLDOWN_MAX)
+	{
+		g_RTVCommandCooldownSeconds[client] = RTV_COMMAND_COOLDOWN_MAX;
+	}
+
+	if (now < g_RTVCommandCooldownUntil[client])
+	{
+		g_RTVCommandCooldownUntil[client] = now + float(g_RTVCommandCooldownSeconds[client]);
+		CReplyToCommand(client, "[{lightgreen}Rock The Vote\x01] Wait {gold}%d seconds{default} before using RTV commands again.", g_RTVCommandCooldownSeconds[client]);
+		return false;
+	}
+
+	g_RTVCommandCooldownUntil[client] = now + float(g_RTVCommandCooldownSeconds[client]);
+	return true;
+}
+
+void ResetRTVCommandCooldowns()
+{
+	for (int client = 1; client <= MAXPLAYERS; client++)
+	{
+		g_RTVCommandCooldownSeconds[client] = 0;
+		g_RTVCommandCooldownUntil[client] = 0.0;
+		g_RTVCommandLastAttempt[client] = 0.0;
+	}
 }
 
 public Action Command_ForceRTV(int client, int args)

@@ -425,12 +425,20 @@ public void OnClientSayCommand_Post(int client, const char[] command, const char
 		return;
 	}
 	
-	if (strcmp(sArgs, "nominate", false) == 0)
+	if (StrEqual(sArgs, "n", false) || StrEqual(sArgs, "nom", false) || StrEqual(sArgs, "nominate", false))
 	{
 		ReplySource old = SetCmdReplySource(SM_REPLY_TO_CHAT);
 		
 		Command_Nominate(client, 0);
 		
+		SetCmdReplySource(old);
+	}
+	else if (StrEqual(sArgs, "noms", false))
+	{
+		ReplySource old = SetCmdReplySource(SM_REPLY_TO_CHAT);
+
+		Command_ShowNominations(client, 0);
+
 		SetCmdReplySource(old);
 	}
 }
