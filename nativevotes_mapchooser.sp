@@ -1028,22 +1028,14 @@ bool IsMapVoteSpecialItem(const char[] map)
 	return StrEqual(map, VOTE_EXTEND, false) || StrEqual(map, VOTE_DONTCHANGE, false);
 }
 
-int GetClientMapVoteWeight(const char[] map, int client)
+int GetClientMapVoteWeight(int client)
 {
-	int weight = GetMapEvalVoteWeight(map);
-	int clientWeight = NativeVotePrefs_GetClientVoteWeight(client);
-	if (clientWeight <= 0)
-	{
-		return 0;
-	}
+	return NativeVotePrefs_GetClientVoteWeight(client);
+}
 
-	if (map[0] && IsMapVoteSpecialItem(map))
-	{
-		weight = MAP_EVAL_DEFAULT_VOTE_WEIGHT;
-	}
-
-	weight += clientWeight - 1;
-	return weight > 0 ? weight : 0;
+int GetMapEvalStartingVotes(const char[] map)
+{
+	return IsMapVoteSpecialItem(map) ? 0 : GetMapEvalVoteWeight(map) - MAP_EVAL_DEFAULT_VOTE_WEIGHT;
 }
 
 void InitializeWeightedVoteItems(int num_items, const int[][] item_info, int[][] weighted_item_info)
@@ -1055,11 +1047,11 @@ void InitializeWeightedVoteItems(int num_items, const int[][] item_info, int[][]
 	}
 }
 
-void LogWeightedVoteResult(const char[] map, int rawVotes, int baseWeight, int weightedVotes)
+void LogWeightedVoteResult(const char[] map, int rawVotes, int startingVotes, int weightedVotes)
 {
-	if (baseWeight > MAP_EVAL_DEFAULT_VOTE_WEIGHT || weightedVotes != rawVotes * baseWeight)
+	if (startingVotes > 0 || weightedVotes != rawVotes)
 	{
-		LogMessage("[NativeVotes MapChooser] Weighted map vote result: map=%s raw=%d base_weight=%d weighted=%d", map, rawVotes, baseWeight, weightedVotes);
+		LogMessage("[NativeVotes MapChooser] Weighted map vote result: map=%s raw=%d starting=%d weighted=%d", map, rawVotes, startingVotes, weightedVotes);
 	}
 }
 
@@ -1081,6 +1073,8 @@ int BuildWeightedNativeVoteResults(NativeVote menu, int num_clients, const int[]
 		{
 			menu.GetItem(itemIndex, map, sizeof(map), displayName, sizeof(displayName));
 		}
+		int startingVotes = GetMapEvalStartingVotes(map);
+		weighted_item_info[i][VOTEINFO_ITEM_VOTES] = startingVotes;
 
 		for (int c = 0; c < num_clients; c++)
 		{
@@ -1090,11 +1084,11 @@ int BuildWeightedNativeVoteResults(NativeVote menu, int num_clients, const int[]
 			}
 
 			int client = client_info[c][VOTEINFO_CLIENT_INDEX];
-			weighted_item_info[i][VOTEINFO_ITEM_VOTES] += GetClientMapVoteWeight(map, client);
+			weighted_item_info[i][VOTEINFO_ITEM_VOTES] += GetClientMapVoteWeight(client);
 		}
 
 		weightedVotes += weighted_item_info[i][VOTEINFO_ITEM_VOTES];
-		LogWeightedVoteResult(map, rawVotes, GetMapEvalVoteWeight(map), weighted_item_info[i][VOTEINFO_ITEM_VOTES]);
+		LogWeightedVoteResult(map, rawVotes, startingVotes, weighted_item_info[i][VOTEINFO_ITEM_VOTES]);
 	}
 
 	SortCustom2D(weighted_item_info, num_items, SortWeightedVoteItems);
@@ -1119,6 +1113,8 @@ int BuildWeightedMenuVoteResults(Menu menu, int num_clients, const int[][] clien
 		{
 			menu.GetItem(itemIndex, map, sizeof(map), _, displayName, sizeof(displayName));
 		}
+		int startingVotes = GetMapEvalStartingVotes(map);
+		weighted_item_info[i][VOTEINFO_ITEM_VOTES] = startingVotes;
 
 		for (int c = 0; c < num_clients; c++)
 		{
@@ -1128,11 +1124,11 @@ int BuildWeightedMenuVoteResults(Menu menu, int num_clients, const int[][] clien
 			}
 
 			int client = client_info[c][VOTEINFO_CLIENT_INDEX];
-			weighted_item_info[i][VOTEINFO_ITEM_VOTES] += GetClientMapVoteWeight(map, client);
+			weighted_item_info[i][VOTEINFO_ITEM_VOTES] += GetClientMapVoteWeight(client);
 		}
 
 		weightedVotes += weighted_item_info[i][VOTEINFO_ITEM_VOTES];
-		LogWeightedVoteResult(map, rawVotes, GetMapEvalVoteWeight(map), weighted_item_info[i][VOTEINFO_ITEM_VOTES]);
+		LogWeightedVoteResult(map, rawVotes, startingVotes, weighted_item_info[i][VOTEINFO_ITEM_VOTES]);
 	}
 
 	SortCustom2D(weighted_item_info, num_items, SortWeightedVoteItems);
