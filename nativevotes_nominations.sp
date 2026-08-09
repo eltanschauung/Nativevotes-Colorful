@@ -130,6 +130,8 @@ public void OnPluginStart()
 	RegConsoleCmd("sm_noms", Command_ShowNominations);
 	RegConsoleCmd("sm_nominations", Command_ShowNominations);
 	RegConsoleCmd("sm_ns", Command_ShowNominations);
+	AddCommandListener(CommandListener_ShowNominations, "say");
+	AddCommandListener(CommandListener_ShowNominations, "say_team");
 	
 	RegAdminCmd("sm_nominate_addmap", Command_Addmap, ADMFLAG_CHANGEMAP, "sm_nominate_addmap <mapname> - Forces a map to be on the next mapvote.");
 	RegAdminCmd("sm_reload_nominations", Command_ReloadNominations, ADMFLAG_RCON, "Reload the nomination map cycle in-place");
@@ -433,14 +435,30 @@ public void OnClientSayCommand_Post(int client, const char[] command, const char
 		
 		SetCmdReplySource(old);
 	}
-	else if (StrEqual(sArgs, "noms", false))
+}
+
+public Action CommandListener_ShowNominations(int client, const char[] command, int argc)
+{
+	if (client <= 0 || !IsClientInGame(client))
 	{
-		ReplySource old = SetCmdReplySource(SM_REPLY_TO_CHAT);
-
-		Command_ShowNominations(client, 0);
-
-		SetCmdReplySource(old);
+		return Plugin_Continue;
 	}
+
+	char message[16];
+	GetCmdArgString(message, sizeof(message));
+	StripQuotes(message);
+	TrimString(message);
+
+	if (!StrEqual(message, "noms", false))
+	{
+		return Plugin_Continue;
+	}
+
+	ReplySource old = SetCmdReplySource(SM_REPLY_TO_CHAT);
+	Command_ShowNominations(client, 0);
+	SetCmdReplySource(old);
+
+	return Plugin_Continue;
 }
 
 bool CanUseNominationCommands(int client)
