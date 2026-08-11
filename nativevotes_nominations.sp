@@ -210,11 +210,6 @@ public void OnConfigsExecuted()
 	{
 		SetFailState("Unable to create a valid map list.");
 	}
-
-	if (GetClientCount(false) == 0)
-	{
-		ClearRecentlyPlayedMapStatuses();
-	}
 }
 
 bool ReloadNominationMapList(bool force)

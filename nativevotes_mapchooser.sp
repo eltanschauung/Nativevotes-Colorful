@@ -121,6 +121,7 @@ bool g_WaitingForVote;
 bool g_MapVoteCompleted;
 bool g_ChangeMapAtRoundEnd;
 bool g_ChangeMapInProgress;
+bool g_ServerBecameEmpty;
 int g_mapFileSerial = -1;
 
 MapChange g_ChangeTime;
@@ -346,11 +347,6 @@ public void OnLibraryRemoved(const char[] name)
 
 public void OnConfigsExecuted()
 {
-	if (GetClientCount(false) == 0)
-	{
-		g_OldMapList.Clear();
-	}
-
 	LoadMapEvalConfig();
 	UpdateCurrentMap();
 	UpdateGameModeFromMap();
@@ -412,7 +408,7 @@ public void OnMapEnd()
 	g_RetryTimer = null;
 	StopEmptyMapChangeTimer();
 
-	if (GetClientCount(false) == 0)
+	if (g_ServerBecameEmpty)
 	{
 		g_OldMapList.Clear();
 		return;
@@ -453,6 +449,15 @@ public void OnClientDisconnect_Post(int client)
 	if (GetClientCount(false) == 0)
 	{
 		g_OldMapList.Clear();
+		g_ServerBecameEmpty = true;
+	}
+}
+
+public void OnClientPutInServer(int client)
+{
+	if (!IsFakeClient(client))
+	{
+		g_ServerBecameEmpty = false;
 	}
 }
 
