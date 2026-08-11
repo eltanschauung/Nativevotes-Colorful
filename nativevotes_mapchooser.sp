@@ -346,6 +346,11 @@ public void OnLibraryRemoved(const char[] name)
 
 public void OnConfigsExecuted()
 {
+	if (GetClientCount(false) == 0)
+	{
+		g_OldMapList.Clear();
+	}
+
 	LoadMapEvalConfig();
 	UpdateCurrentMap();
 	UpdateGameModeFromMap();
@@ -406,6 +411,12 @@ public void OnMapEnd()
 	g_VoteTimer = null;
 	g_RetryTimer = null;
 	StopEmptyMapChangeTimer();
+
+	if (GetClientCount(false) == 0)
+	{
+		g_OldMapList.Clear();
+		return;
+	}
 	
 	char map[PLATFORM_MAX_PATH];
 	GetCurrentMap(map, sizeof(map));
@@ -435,6 +446,14 @@ public void OnClientDisconnect(int client)
 	
 	g_NominateOwners.Erase(index);
 	g_NominateList.Erase(index);
+}
+
+public void OnClientDisconnect_Post(int client)
+{
+	if (GetClientCount(false) == 0)
+	{
+		g_OldMapList.Clear();
+	}
 }
 
 public Action Command_SetNextMap(int client, int args)

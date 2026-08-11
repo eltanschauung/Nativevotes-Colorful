@@ -210,6 +210,11 @@ public void OnConfigsExecuted()
 	{
 		SetFailState("Unable to create a valid map list.");
 	}
+
+	if (GetClientCount(false) == 0)
+	{
+		ClearRecentlyPlayedMapStatuses();
+	}
 }
 
 bool ReloadNominationMapList(bool force)
@@ -249,6 +254,14 @@ public void OnClientDisconnect(int client)
 	}
 
 	ClearPendingRandomNomination(client);
+}
+
+public void OnClientDisconnect_Post(int client)
+{
+	if (GetClientCount(false) == 0)
+	{
+		ClearRecentlyPlayedMapStatuses();
+	}
 }
 
 void ClearPendingRandomNomination(int client)
@@ -929,6 +942,38 @@ void ClearNominatedMapStatuses()
 	}
 
 	g_NominatedStatusMaps.Clear();
+}
+
+void ClearRecentlyPlayedMapStatuses()
+{
+	if (g_MapTrie == null)
+	{
+		return;
+	}
+
+	StringMapSnapshot snapshot = g_MapTrie.Snapshot();
+	char map[PLATFORM_MAX_PATH];
+	for (int i = 0; i < snapshot.Length; i++)
+	{
+		snapshot.GetKey(i, map, sizeof(map));
+
+		int status;
+		if (!g_MapTrie.GetValue(map, status)
+			|| (status & MAPSTATUS_EXCLUDE_PREVIOUS) == 0)
+		{
+			continue;
+		}
+
+		status &= ~MAPSTATUS_EXCLUDE_PREVIOUS;
+		if ((status & (MAPSTATUS_EXCLUDE_CURRENT|MAPSTATUS_EXCLUDE_NOMINATED)) == 0)
+		{
+			status &= ~MAPSTATUS_DISABLED;
+			status |= MAPSTATUS_ENABLED;
+		}
+		g_MapTrie.SetValue(map, status);
+	}
+
+	delete snapshot;
 }
 
 void SetMapNominatedStatus(const char[] map, bool nominated)
