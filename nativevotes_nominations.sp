@@ -39,6 +39,7 @@
 
 #undef REQUIRE_PLUGIN
 #include <nativevotes>
+#include <plugin_statistics>
 #define REQUIRE_PLUGIN
 
 #include "nativevotes_statistics.inc"
@@ -100,6 +101,7 @@ bool g_RegisteredMenusNextLevel = false;
 #define LIBRARY "nativevotes"
 #define RANDOM_NOMINATION_MENU_SIZE 50
 static const float RANDOM_NOMINATION_DELAY = 5.0;
+static const float NOMINATION_SLOW_OPERATION_SECONDS = 0.010;
 
 Handle g_hRandomNominateTimer[MAXPLAYERS + 1];
 int g_iRandomNominateUserId[MAXPLAYERS + 1];
@@ -656,6 +658,7 @@ public Action Timer_RandomNominate(Handle timer, any client)
 
 int FindMatchingMaps(ArrayList mapList, ArrayList results, const char[] input)
 {
+	float startedAt = GetEngineTime();
 	int map_count = mapList.Length;
 
 	if (!map_count)
@@ -683,11 +686,13 @@ int FindMatchingMaps(ArrayList mapList, ArrayList results, const char[] input)
 		}
 	}
 
+	RecordSlowNominationOperation("find_matching_maps", startedAt, map_count);
 	return matches;
 }
 
 void AttemptNominate(int client, const char[] map, int size, bool isVoteMenu)
 {
+	float startedAt = GetEngineTime();
 	char mapname[PLATFORM_MAX_PATH];
 	if (FindMap(map, mapname, size) == FindMap_NotFound)
 	{
@@ -789,15 +794,19 @@ void AttemptNominate(int client, const char[] map, int size, bool isVoteMenu)
 		NativeVoteStats_LogEvent("nomination", mapname, client, -1, 0, 0, 0, "replaced");
 		CReplyToCommandEx(client, client, "[{lightgreen}Nominations\x01] %t", "Map Nominated", name, displayName);
 	}
+
+	RecordSlowNominationOperation("attempt_nomination", startedAt, g_NominatedStatusMaps.Length);
 	
 	return;
 }
 
 void OpenNominationMenu(int client)
 {
+	float startedAt = GetEngineTime();
 	SyncNominatedMapStatuses();
 	g_MapMenu.SetTitle("%t", "Nominate Title", client);
 	g_MapMenu.Display(client, MENU_TIME_FOREVER);
+	RecordSlowNominationOperation("open_nomination_menu", startedAt, g_MapList.Length);
 }
 
 void OpenRandomNominationMenu(int client)
@@ -869,6 +878,7 @@ void SyncNominatedMapStatuses()
 	{
 		return;
 	}
+	float startedAt = GetEngineTime();
 
 	ClearNominatedMapStatuses();
 
@@ -892,7 +902,9 @@ void SyncNominatedMapStatuses()
 		}
 	}
 
+	int nominationCount = nominatedMaps.Length;
 	delete nominatedMaps;
+	RecordSlowNominationOperation("sync_nominated_statuses", startedAt, nominationCount);
 }
 
 void ClearNominatedMapStatuses()
@@ -960,6 +972,7 @@ void SetMapNominatedStatus(const char[] map, bool nominated)
 
 void BuildMapMenu()
 {
+	float startedAt = GetEngineTime();
 	delete g_MapMenu;
 
 	g_MapTrie.Clear();
@@ -1017,6 +1030,27 @@ void BuildMapMenu()
 	g_MapMenu.ExitButton = true;
 
 	delete excludeMaps;
+	RecordSlowNominationOperation("build_map_menu", startedAt, g_MapList.Length);
+}
+
+void RecordSlowNominationOperation(const char[] operation, float startedAt, int entryCount)
+{
+	float elapsed = GetEngineTime() - startedAt;
+	if (elapsed < NOMINATION_SLOW_OPERATION_SECONDS
+		|| GetFeatureStatus(FeatureType_Native, "PluginStats_Record") != FeatureStatus_Available)
+	{
+		return;
+	}
+
+	char message[192];
+	FormatEx(
+		message,
+		sizeof(message),
+		"operation=%s elapsed_ms=%.3f entries=%d",
+		operation,
+		elapsed * 1000.0,
+		entryCount);
+	PluginStats_Record("nomination_slow_operation", message);
 }
 
 public int MenuHandler_MapSelect(Menu menu, MenuAction action, int param1, int param2)
