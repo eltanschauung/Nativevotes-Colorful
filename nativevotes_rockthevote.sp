@@ -226,6 +226,7 @@ public void OnMapEnd()
 {
 	StopRTVVoterRefreshTimer();
 	g_RTVAllowed = false;
+	g_RTVTime = 0;
 	g_Voters = 0;
 	ResetRTV();
 	g_VotesNeeded = 0;
@@ -241,8 +242,10 @@ public void OnConfigsExecuted()
 	if (g_ConVars[initialdelay].FloatValue <= 0.0)
 	{
 		g_RTVAllowed = true;
+		g_RTVTime = 0;
 		return;
 	}
+	g_RTVTime = GetTime() + RoundToCeil(g_ConVars[initialdelay].FloatValue);
 	CreateTimer(g_ConVars[initialdelay].FloatValue, Timer_DelayRTV, _, TIMER_FLAG_NO_MAPCHANGE);
 }
 
@@ -469,9 +472,10 @@ void AttemptUnRTV(int client)
 {
 	RecalculateRTVVoters();
 
-	if (!g_RTVAllowed || (g_ConVars[postvoteaction].IntValue == 1 && HasEndOfMapVoteFinished()))
+	bool postVoteDenied = g_ConVars[postvoteaction].IntValue == 1 && HasEndOfMapVoteFinished();
+	if (!g_RTVAllowed || postVoteDenied)
 	{
-		CReplyToCommand(client, "[{lightgreen}Rock The Vote\x01] %t", "RTV Not Allowed");
+		ReplyRTVUnavailable(client, postVoteDenied);
 		return;
 	}
 
@@ -498,9 +502,10 @@ void AttemptUnRTV(int client)
 
 void AttemptRTV(int client, bool isVoteMenu=false, bool silent=false, int requestedWeight=0)
 {
-	if (!g_RTVAllowed || (g_ConVars[postvoteaction].IntValue == 1 && HasEndOfMapVoteFinished()))
+	bool postVoteDenied = g_ConVars[postvoteaction].IntValue == 1 && HasEndOfMapVoteFinished();
+	if (!g_RTVAllowed || postVoteDenied)
 	{
-		CReplyToCommand(client, "[{lightgreen}Rock The Vote\x01] %t", "RTV Not Allowed");
+		int timeleft = ReplyRTVUnavailable(client, postVoteDenied);
 		if (isVoteMenu && g_NativeVotes)
 		{
 			if (g_Warmup)
@@ -509,7 +514,6 @@ void AttemptRTV(int client, bool isVoteMenu=false, bool silent=false, int reques
 			}
 			else
 			{
-				int timeleft = g_RTVTime - GetTime();
 				if (timeleft > 0)
 				{
 					NativeVotes_DisplayCallVoteFail(client, NativeVotesCallFail_Failed, timeleft);
@@ -604,8 +608,22 @@ public Action Timer_DelayRTV(Handle timer)
 {
 	RecalculateRTVVoters();
 	g_RTVAllowed = true;
+	g_RTVTime = 0;
 
 	return Plugin_Continue;
+}
+
+int ReplyRTVUnavailable(int client, bool postVoteDenied)
+{
+	int timeleft = postVoteDenied ? 0 : g_RTVTime - GetTime();
+	if (timeleft > 0)
+	{
+		CReplyToCommand(client, "[{lightgreen}Rock The Vote\x01] You can rock the vote in {gold}%d seconds{default}", timeleft);
+		return timeleft;
+	}
+
+	CReplyToCommand(client, "[{lightgreen}Rock The Vote\x01] %t", "RTV Not Allowed");
+	return 0;
 }
 
 int GetRTVConnectDelayRemaining(int client)
