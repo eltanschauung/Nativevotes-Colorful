@@ -135,6 +135,7 @@ public void OnPluginStart()
 	RegConsoleCmd("sm_srtv", Command_SilentRTV);
 	RegConsoleCmd("sm_silentrtv", Command_SilentRTV);
 	RegConsoleCmd("sm_unrtv", Command_UnRTV);
+	RegConsoleCmd("sm_rtvp", Command_RTVProgress, "Show current rock-the-vote progress.");
 	RegAdminCmd("sm_forcertv", Command_ForceRTV, ADMFLAG_CHANGEMAP);
 	RegAdminCmd("sm_resetrtv", Command_ResetRTV, ADMFLAG_CHANGEMAP);
 	
@@ -393,6 +394,25 @@ public Action Command_UnRTV(int client, int args)
 	if (CheckRTVCommandCooldown(client))
 	{
 		AttemptUnRTV(client);
+	}
+
+	return Plugin_Handled;
+}
+
+public Action Command_RTVProgress(int client, int args)
+{
+	RecalculateRTVVoters();
+
+	if (client == 0)
+	{
+		ReplyToCommand(client, "[Rock The Vote] RTV progress: %d/%d", g_Votes, g_VotesNeeded);
+	}
+	else
+	{
+		CReplyToCommand(client,
+			"[{lightgreen}Rock The Vote\x01] RTV progress: {gold}%d{default}/{gold}%d{default}",
+			g_Votes,
+			g_VotesNeeded);
 	}
 
 	return Plugin_Handled;
