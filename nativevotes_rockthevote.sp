@@ -587,12 +587,6 @@ void AttemptRTV(int client, bool isVoteMenu=false, bool silent=false, int reques
 		return;			
 	}
 	
-	if (g_Voted[client])
-	{
-		CReplyToCommand(client, "[{lightgreen}Rock The Vote\x01] %t", "Already Voted", g_Votes, g_VotesNeeded);
-		return;			
-	}
-	
 	char name[MAX_NAME_LENGTH];
 	GetPlayerName(client, name, sizeof(name));
 
@@ -600,6 +594,64 @@ void AttemptRTV(int client, bool isVoteMenu=false, bool silent=false, int reques
 	if (requestedWeight > maximumVoteWeight)
 	{
 		CReplyToCommand(client, "[{lightgreen}Rock The Vote\x01] Your maximum RTV value is {gold}%d{default}.", maximumVoteWeight);
+		return;
+	}
+
+	if (g_Voted[client])
+	{
+		if (requestedWeight <= 0)
+		{
+			CReplyToCommand(client, "[{lightgreen}Rock The Vote\x01] %t", "Already Voted", g_Votes, g_VotesNeeded);
+			return;
+		}
+
+		int previousWeight = g_RTVVoteWeight[client] > 0
+			? g_RTVVoteWeight[client]
+			: maximumVoteWeight;
+		if (requestedWeight == previousWeight)
+		{
+			CReplyToCommand(client,
+				"[{lightgreen}Rock The Vote\x01] Your RTV value is already {gold}%d{default}.",
+				requestedWeight);
+			return;
+		}
+
+		g_RTVVoteWeight[client] = requestedWeight;
+		RecalculateRTVVoters();
+		NativeVoteStats_LogEvent(
+			silent ? "silent_rtv_update" : "rtv_update",
+			"",
+			client,
+			-1,
+			g_Votes,
+			g_VotesNeeded,
+			g_Voters,
+			"");
+
+		if (silent)
+		{
+			CReplyToCommand(client,
+				"[{lightgreen}Rock The Vote\x01] Silent RTV changed from {gold}%d{default} to {gold}%d{default}. (%d/%d needed)",
+				previousWeight,
+				requestedWeight,
+				g_Votes,
+				g_VotesNeeded);
+		}
+		else
+		{
+			CPrintToChatAllEx(client,
+				"[{lightgreen}Rock The Vote\x01] %s changed their RTV value from {gold}%d{default} to {gold}%d{default}. (%d/%d needed)",
+				name,
+				previousWeight,
+				requestedWeight,
+				g_Votes,
+				g_VotesNeeded);
+		}
+
+		if (g_Votes >= g_VotesNeeded)
+		{
+			StartRTV();
+		}
 		return;
 	}
 
