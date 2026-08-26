@@ -35,6 +35,7 @@
  */
  
 #include <sourcemod>
+#include <sdktools_gamerules>
 #include <mapchooser>
 #include <nextmap>
 #include <regex>
@@ -116,6 +117,8 @@ NativeVote g_VoteNative;
 
 int g_Extends;
 int g_TotalRounds;
+bool g_IsTF2;
+bool g_TF2RoundCheckPending;
 bool g_HasVoteStarted;
 bool g_WaitingForVote;
 bool g_MapVoteCompleted;
@@ -190,6 +193,7 @@ public void OnPluginStart()
 	{
 		engine = Engine_TF2;
 	}
+	g_IsTF2 = (engine == Engine_TF2);
 
 	int arraySize = ByteCountToCells(PLATFORM_MAX_PATH);
 	g_MapList = new ArrayList(arraySize);
@@ -241,6 +245,7 @@ public void OnPluginStart()
 			case Engine_TF2:
 			{
 				HookEvent("teamplay_win_panel", Event_TeamplayWinPanel);
+				HookEvent("teamplay_round_win", Event_TeamplayRoundWin, EventHookMode_PostNoCopy);
 				HookEvent("teamplay_restart_round", Event_TeamplayRestartRound);
 				HookEvent("arena_win_panel", Event_TeamplayWinPanel);
 			}
@@ -369,7 +374,8 @@ public void OnConfigsExecuted()
 		}
 	}
 
-	g_TotalRounds = 0;
+	g_TotalRounds = g_IsTF2 ? GameRules_GetProp("m_nRoundsPlayed") : 0;
+	g_TF2RoundCheckPending = false;
 	g_Extends = 0;
 	g_MapVoteCompleted = false;
 	g_HasVoteStarted = false;
@@ -558,7 +564,35 @@ public Action Timer_StartMapVote(Handle timer, DataPack data)
 public void Event_TeamplayRestartRound(Event event, const char[] name, bool dontBroadcast)
 {
 	/* Game got restarted - reset our round count tracking */
-	g_TotalRounds = 0;	
+	g_TotalRounds = 0;
+	g_TF2RoundCheckPending = false;
+}
+
+public void Event_TeamplayRoundWin(Event event, const char[] name, bool dontBroadcast)
+{
+	if (g_TF2RoundCheckPending)
+	{
+		return;
+	}
+
+	g_TF2RoundCheckPending = true;
+	RequestFrame(Frame_CheckTF2RoundLimit);
+}
+
+public void Frame_CheckTF2RoundLimit(any data)
+{
+	g_TF2RoundCheckPending = false;
+	g_TotalRounds = GameRules_GetProp("m_nRoundsPlayed");
+
+	if (!g_MapList.Length
+		|| g_HasVoteStarted
+		|| g_MapVoteCompleted
+		|| !g_ConVars[mapvote_endvote].BoolValue)
+	{
+		return;
+	}
+
+	CheckMaxRounds(g_TotalRounds);
 }
 
 public void Event_TeamplayWinPanel(Event event, const char[] name, bool dontBroadcast)
@@ -575,14 +609,10 @@ public void Event_TeamplayWinPanel(Event event, const char[] name, bool dontBroa
 		
 	if (event.GetInt("round_complete") == 1 || StrEqual(name, "arena_win_panel"))
 	{
-		g_TotalRounds++;
-		
 		if (!g_MapList.Length || g_HasVoteStarted || g_MapVoteCompleted || !g_ConVars[mapvote_endvote].BoolValue)
 		{
 			return;
 		}
-		
-		CheckMaxRounds(g_TotalRounds);
 		
 		switch(event.GetInt("winning_team"))
 		{
