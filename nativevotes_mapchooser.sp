@@ -44,6 +44,8 @@
 #include <nativevotes>
 #define REQUIRE_PLUGIN
 
+#include "nativevotes_progress.inc"
+
 #undef REQUIRE_EXTENSIONS
 #include <ripext>
 #define REQUIRE_EXTENSIONS
@@ -1101,6 +1103,77 @@ void InitializeWeightedVoteItems(int num_items, const int[][] item_info, int[][]
 	}
 }
 
+int CalculateWeightedMapVoteItem(
+	const char[] map,
+	int itemIndex,
+	int numClients,
+	const int[][] clientInfo)
+{
+	int weightedVotes = GetMapEvalStartingVotes(map);
+	for (int clientIndex = 0; clientIndex < numClients; clientIndex++)
+	{
+		if (clientInfo[clientIndex][VOTEINFO_CLIENT_ITEM] == itemIndex)
+		{
+			weightedVotes += GetClientMapVoteWeight(
+				clientInfo[clientIndex][VOTEINFO_CLIENT_INDEX]);
+		}
+	}
+	return weightedVotes;
+}
+
+public Action NativeVotes_OnBuildProgress(
+	NativeVote vote,
+	const int[] clientChoices,
+	int clientChoiceCount,
+	int[] itemVotes,
+	int itemCount,
+	int &weightedVoteTotal)
+{
+	if (!g_NativeVotes || vote == null || g_VoteNative == null || vote != g_VoteNative)
+	{
+		return Plugin_Continue;
+	}
+
+	int[][] clientInfo = new int[MaxClients][2];
+	int numClients;
+	for (int client = 1; client <= MaxClients && client < clientChoiceCount; client++)
+	{
+		int choice = clientChoices[client];
+		if (choice < 0 || choice >= itemCount)
+		{
+			continue;
+		}
+
+		clientInfo[numClients][VOTEINFO_CLIENT_INDEX] = client;
+		clientInfo[numClients][VOTEINFO_CLIENT_ITEM] = choice;
+		numClients++;
+	}
+
+	weightedVoteTotal = 0;
+	char map[PLATFORM_MAX_PATH];
+	char displayName[PLATFORM_MAX_PATH];
+	for (int item = 0; item < itemCount; item++)
+	{
+		if (itemVotes[item] <= 0)
+		{
+			itemVotes[item] = 0;
+			continue;
+		}
+
+		map[0] = '\0';
+		displayName[0] = '\0';
+		vote.GetItem(item, map, sizeof(map), displayName, sizeof(displayName));
+		itemVotes[item] = CalculateWeightedMapVoteItem(
+			map,
+			item,
+			numClients,
+			clientInfo);
+		weightedVoteTotal += itemVotes[item];
+	}
+
+	return Plugin_Changed;
+}
+
 void LogWeightedVoteResult(const char[] map, int rawVotes, int startingVotes, int weightedVotes)
 {
 	if (startingVotes > 0 || weightedVotes != rawVotes)
@@ -1128,18 +1201,11 @@ int BuildWeightedNativeVoteResults(NativeVote menu, int num_clients, const int[]
 			menu.GetItem(itemIndex, map, sizeof(map), displayName, sizeof(displayName));
 		}
 		int startingVotes = GetMapEvalStartingVotes(map);
-		weighted_item_info[i][VOTEINFO_ITEM_VOTES] = startingVotes;
-
-		for (int c = 0; c < num_clients; c++)
-		{
-			if (client_info[c][VOTEINFO_CLIENT_ITEM] != itemIndex)
-			{
-				continue;
-			}
-
-			int client = client_info[c][VOTEINFO_CLIENT_INDEX];
-			weighted_item_info[i][VOTEINFO_ITEM_VOTES] += GetClientMapVoteWeight(client);
-		}
+		weighted_item_info[i][VOTEINFO_ITEM_VOTES] = CalculateWeightedMapVoteItem(
+			map,
+			itemIndex,
+			num_clients,
+			client_info);
 
 		weightedVotes += weighted_item_info[i][VOTEINFO_ITEM_VOTES];
 		LogWeightedVoteResult(map, rawVotes, startingVotes, weighted_item_info[i][VOTEINFO_ITEM_VOTES]);
@@ -1168,18 +1234,11 @@ int BuildWeightedMenuVoteResults(Menu menu, int num_clients, const int[][] clien
 			menu.GetItem(itemIndex, map, sizeof(map), _, displayName, sizeof(displayName));
 		}
 		int startingVotes = GetMapEvalStartingVotes(map);
-		weighted_item_info[i][VOTEINFO_ITEM_VOTES] = startingVotes;
-
-		for (int c = 0; c < num_clients; c++)
-		{
-			if (client_info[c][VOTEINFO_CLIENT_ITEM] != itemIndex)
-			{
-				continue;
-			}
-
-			int client = client_info[c][VOTEINFO_CLIENT_INDEX];
-			weighted_item_info[i][VOTEINFO_ITEM_VOTES] += GetClientMapVoteWeight(client);
-		}
+		weighted_item_info[i][VOTEINFO_ITEM_VOTES] = CalculateWeightedMapVoteItem(
+			map,
+			itemIndex,
+			num_clients,
+			client_info);
 
 		weightedVotes += weighted_item_info[i][VOTEINFO_ITEM_VOTES];
 		LogWeightedVoteResult(map, rawVotes, startingVotes, weighted_item_info[i][VOTEINFO_ITEM_VOTES]);

@@ -43,6 +43,8 @@
 #include <nativevotes>
 #include <implodeexplode>
 
+#include "nativevotes_progress.inc"
+
 native bool WhaleTracker_AreStatsLoaded(int client);
 native bool WhaleTracker_HasPlaytimeHours(int client, int hours);
 
@@ -126,6 +128,9 @@ bool g_ClientVoteCounted[MAXPLAYERS+1];
 char g_LeaderList[1024];
 int g_UncountedMapVotes;
 bool g_MapVoteFailOpenUnavailableLogged;
+Handle g_ProgressBuilderForward;
+bool g_ProgressUsesWeights;
+int g_ProgressWeightedTotal;
 
 ConVar sv_vote_holder_may_vote_no;
 
@@ -264,6 +269,15 @@ public void OnPluginStart()
 {
 	LoadTranslations("core.phrases");
 	LoadTranslations("nativevotes.phrases.txt");
+	g_ProgressBuilderForward = CreateGlobalForward(
+		"NativeVotes_OnBuildProgress",
+		ET_Hook,
+		Param_Cell,
+		Param_Array,
+		Param_Cell,
+		Param_Array,
+		Param_Cell,
+		Param_CellByRef);
 	
 	g_ConVars[progress_hintbox]  	   = CreateConVar("nativevotes_progress_hintbox", "0", "Show current vote progress in a hint box", FCVAR_NONE, true, 0.0, true, 1.0);
 	g_ConVars[progress_chat] 		   = CreateConVar("nativevotes_progress_chat", "0", "Show current vote progress as chat messages", FCVAR_NONE, true, 0.0, true, 1.0);
@@ -391,12 +405,15 @@ public void OnClientDisconnect_Post(int client)
 	int item = g_ClientVotes[client];
 	if (item >= VOTE_PENDING)
 	{
-		if (item > VOTE_PENDING)
+		if (item > VOTE_PENDING && g_ClientVoteCounted[client])
 		{
 			g_hVotes.Set(item, g_hVotes.Get(item) - 1);
+			g_NumVotes--;
+			Game_UpdateVoteCounts(g_hVotes, g_TotalClients);
 		}
 		
 		g_ClientVotes[client] = VOTE_NOT_VOTING;
+		g_ClientVoteCounted[client] = false;
 	}
 	
 	CancelClientVote(g_hCurVote, client, MenuCancel_Disconnected);
@@ -810,7 +827,6 @@ void OnVoteSelect(NativeVote vote, int client, int item)
 				}
 			}
 			
-			BuildVoteLeaders();
 			DrawHintProgress();
 			
 			OnSelect(g_hCurVote, client, item);
@@ -1062,27 +1078,59 @@ void DrawHintProgress()
 	
 	int iTimeRemaining = RoundFloat(timeRemaining);
 
-	PrintHintTextToAll("%t%s", "Vote Count", g_NumVotes, g_TotalClients, iTimeRemaining, g_LeaderList);
+	BuildVoteLeaders();
+	if (g_ProgressUsesWeights)
+	{
+		PrintHintTextToAll(
+			"%t\nWeighted votes: %d%s",
+			"Vote Count",
+			g_NumVotes,
+			g_TotalClients,
+			iTimeRemaining,
+			g_ProgressWeightedTotal,
+			g_LeaderList);
+	}
+	else
+	{
+		PrintHintTextToAll("%t%s", "Vote Count", g_NumVotes, g_TotalClients, iTimeRemaining, g_LeaderList);
+	}
 }
 
 void BuildVoteLeaders()
 {
+	g_LeaderList[0] = '\0';
+	g_ProgressUsesWeights = false;
+	g_ProgressWeightedTotal = g_NumVotes;
 	if (g_NumVotes == 0 || !g_ConVars[progress_hintbox].BoolValue)
 	{
 		return;
 	}
-	
-	// Since we can't have structs, we get "struct" with this instead
-	
+
 	int slots = Game_GetMaxItems();
+	int[] itemVotes = new int[slots];
+	for (int item = 0; item < g_Items; item++)
+	{
+		itemVotes[item] = g_hVotes.Get(item);
+	}
+
+	g_ProgressUsesWeights = BuildWeightedVoteProgress(itemVotes, g_Items, g_ProgressWeightedTotal);
+
 	int[][] votes = new int[slots][2];
+	int numItems;
+	for (int item = 0; item < g_Items; item++)
+	{
+		if (itemVotes[item] <= 0)
+		{
+			continue;
+		}
+
+		votes[numItems][VOTEINFO_ITEM_INDEX] = item;
+		votes[numItems][VOTEINFO_ITEM_VOTES] = itemVotes[item];
+		numItems++;
+	}
+	SortCustom2D(votes, numItems, SortVoteItems);
 	
-	int num_items = Internal_GetResults(votes);
-	
-	/* Take the top 3 (if applicable) and draw them */
-	g_LeaderList[0] = '\0';
-	
-	for (int i = 0; i < num_items && i < 3; i++)
+	for (int i = 0; i < numItems && i < 3; i++)
 	{
 		int cur_item = votes[i][VOTEINFO_ITEM_INDEX];
 		char choice[256];
@@ -1090,6 +1138,54 @@ void BuildVoteLeaders()
 		Format(g_LeaderList, sizeof(g_LeaderList), "%s\n%i. %s: (%i)", g_LeaderList, i+1, choice, votes[i][VOTEINFO_ITEM_VOTES]);
 	}
 	
+}
+
+bool BuildWeightedVoteProgress(int[] itemVotes, int itemCount, int &weightedVoteTotal)
+{
+	if (g_ProgressBuilderForward == null || GetForwardFunctionCount(g_ProgressBuilderForward) == 0)
+	{
+		return false;
+	}
+
+	int clientChoices[MAXPLAYERS + 1];
+	for (int client = 0; client <= MaxClients; client++)
+	{
+		clientChoices[client] = NATIVEVOTES_PROGRESS_NO_SELECTION;
+	}
+
+	for (int client = 1; client <= MaxClients; client++)
+	{
+		if (g_ClientVoteCounted[client] && g_ClientVotes[client] > VOTE_PENDING)
+		{
+			clientChoices[client] = g_ClientVotes[client];
+		}
+	}
+
+	Action result = Plugin_Continue;
+	Call_StartForward(g_ProgressBuilderForward);
+	Call_PushCell(g_hCurVote);
+	Call_PushArray(clientChoices, sizeof(clientChoices));
+	Call_PushCell(sizeof(clientChoices));
+	Call_PushArrayEx(itemVotes, itemCount, SM_PARAM_COPYBACK);
+	Call_PushCell(itemCount);
+	Call_PushCellRef(weightedVoteTotal);
+	Call_Finish(result);
+
+	if (result == Plugin_Continue)
+	{
+		weightedVoteTotal = g_NumVotes;
+		return false;
+	}
+
+	weightedVoteTotal = weightedVoteTotal > 0 ? weightedVoteTotal : 0;
+	for (int item = 0; item < itemCount; item++)
+	{
+		if (itemVotes[item] < 0)
+		{
+			itemVotes[item] = 0;
+		}
+	}
+	return true;
 }
 
 public int SortVoteItems(int[] a, int[] b, const int[][] array, Handle hndl)
@@ -1659,7 +1755,7 @@ int Internal_GetClients(int[][] client_vote)
 	
 	for (int i = 1; i <= MaxClients; i++)
 	{
-		if (g_ClientVotes[i] >= VOTE_PENDING)
+		if (g_ClientVotes[i] > VOTE_PENDING && g_ClientVoteCounted[i])
 		{
 			client_vote[num_clients][VOTEINFO_CLIENT_INDEX] = i;
 			client_vote[num_clients][VOTEINFO_CLIENT_ITEM] = g_ClientVotes[i];
@@ -1690,6 +1786,8 @@ void Internal_Reset(bool cancel=false)
 	g_bCancelled = false;
 	g_LeaderList[0] = '\0';
 	g_TotalClients = 0;
+	g_ProgressUsesWeights = false;
+	g_ProgressWeightedTotal = 0;
 	
 	if (g_hDisplayTimer != null)
 	{

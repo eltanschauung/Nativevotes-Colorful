@@ -8,6 +8,12 @@ This is a heavily modified version of Nativevotes that accomplishes the followin
 - Adds a vote whitelist and blacklist system, vote whitelisted clients gain additional weight in their votes and rtv use, while the blacklist system (TBC) will subtract voting power.
 - Adds data collection features for analysis of vote trends
 - Adds optional playtime gating for rockthevote and nominations, playtime is queried from [WhaleTracker](https://github.com/eltanschauung/Whaletracker)
+- Shows raw participation and weighted map totals separately in the optional progress hint, including whitelist and mapeval bonuses
+
+MapChooser supplies weighted progress through the optional
+`NativeVotes_OnBuildProgress` forward declared in
+`nativevotes_progress.inc`. Other vote owners can leave the forward
+unimplemented and NativeVotes will continue displaying raw counts.
 
 Credit to Powerlord and all related parties: https://github.com/Heapons/sourcemod-nativevotes-updated/
 
