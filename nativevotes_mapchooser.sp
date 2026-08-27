@@ -35,7 +35,6 @@
  */
  
 #include <sourcemod>
-#include <sdktools_gamerules>
 #include <mapchooser>
 #include <nextmap>
 #include <regex>
@@ -55,6 +54,8 @@
 
 #pragma semicolon 1
 #pragma newdecls required
+
+#define MAPVOTE_TIME_CHECK_INTERVAL 10.0
 
 public Plugin myinfo =
 {
@@ -119,8 +120,6 @@ NativeVote g_VoteNative;
 
 int g_Extends;
 int g_TotalRounds;
-bool g_IsTF2;
-bool g_TF2RoundCheckPending;
 bool g_HasVoteStarted;
 bool g_WaitingForVote;
 bool g_MapVoteCompleted;
@@ -195,8 +194,6 @@ public void OnPluginStart()
 	{
 		engine = Engine_TF2;
 	}
-	g_IsTF2 = (engine == Engine_TF2);
-
 	int arraySize = ByteCountToCells(PLATFORM_MAX_PATH);
 	g_MapList = new ArrayList(arraySize);
 	g_NominateList = new ArrayList(arraySize);
@@ -247,7 +244,7 @@ public void OnPluginStart()
 			case Engine_TF2:
 			{
 				HookEvent("teamplay_win_panel", Event_TeamplayWinPanel);
-				HookEvent("teamplay_round_win", Event_TeamplayRoundWin, EventHookMode_PostNoCopy);
+				HookEvent("teamplay_round_win", Event_TeamplayRoundWin);
 				HookEvent("teamplay_restart_round", Event_TeamplayRestartRound);
 				HookEvent("arena_win_panel", Event_TeamplayWinPanel);
 			}
@@ -376,8 +373,7 @@ public void OnConfigsExecuted()
 		}
 	}
 
-	g_TotalRounds = g_IsTF2 ? GameRules_GetProp("m_nRoundsPlayed") : 0;
-	g_TF2RoundCheckPending = false;
+	g_TotalRounds = 0;
 	g_Extends = 0;
 	g_MapVoteCompleted = false;
 	g_HasVoteStarted = false;
@@ -514,28 +510,74 @@ void SetupTimeleftTimer()
 		g_VoteTimer = null;
 	}
 
-	if (!g_MapList.Length || !g_ConVars[mapvote_endvote].BoolValue || g_MapVoteCompleted || g_HasVoteStarted)
+	if (!CanStartEndMapVote())
 	{
 		return;
 	}
 
-	int time;
-	if (GetMapTimeLeft(time) && time > 0)
+	if (IsTimeleftVoteDue() && HasHumanClientInGame())
 	{
-		int startTime = g_ConVars[mapvote_start].IntValue * 60;
-		if (time <= startTime)
-		{
-			InitiateVote(MapChange_MapEnd, null);
-			return;
-		}
-
-		//g_VoteTimer = CreateTimer(float(time - startTime), Timer_StartMapVote, _, TIMER_FLAG_NO_MAPCHANGE);
-		DataPack data;
-		g_VoteTimer = CreateDataTimer(float(time - startTime), Timer_StartMapVote, data, TIMER_FLAG_NO_MAPCHANGE);
-		data.WriteCell(MapChange_MapEnd);
-		data.WriteCell(INVALID_HANDLE);
-		data.Reset();
+		InitiateVote(MapChange_MapEnd, null);
+		return;
 	}
+
+	g_VoteTimer = CreateTimer(
+		MAPVOTE_TIME_CHECK_INTERVAL,
+		Timer_CheckMapVoteTime,
+		_,
+		TIMER_REPEAT | TIMER_FLAG_NO_MAPCHANGE);
+}
+
+bool CanStartEndMapVote()
+{
+	return g_MapList.Length
+		&& g_ConVars[mapvote_endvote].BoolValue
+		&& !g_MapVoteCompleted
+		&& !g_HasVoteStarted
+		&& !g_WaitingForVote;
+}
+
+bool IsTimeleftVoteDue()
+{
+	int time;
+	return GetMapTimeLeft(time)
+		&& time <= g_ConVars[mapvote_start].IntValue * 60;
+}
+
+bool HasHumanClientInGame()
+{
+	for (int client = 1; client <= MaxClients; client++)
+	{
+		if (IsClientInGame(client) && !IsFakeClient(client))
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+public Action Timer_CheckMapVoteTime(Handle timer)
+{
+	if (timer != g_VoteTimer)
+	{
+		return Plugin_Stop;
+	}
+
+	if (!CanStartEndMapVote())
+	{
+		g_VoteTimer = null;
+		return Plugin_Stop;
+	}
+
+	if (!IsTimeleftVoteDue() || !HasHumanClientInGame())
+	{
+		return Plugin_Continue;
+	}
+
+	g_VoteTimer = null;
+	InitiateVote(MapChange_MapEnd, null);
+	return Plugin_Stop;
 }
 
 public Action Timer_StartMapVote(Handle timer, DataPack data)
@@ -567,24 +609,16 @@ public void Event_TeamplayRestartRound(Event event, const char[] name, bool dont
 {
 	/* Game got restarted - reset our round count tracking */
 	g_TotalRounds = 0;
-	g_TF2RoundCheckPending = false;
 }
 
 public void Event_TeamplayRoundWin(Event event, const char[] name, bool dontBroadcast)
 {
-	if (g_TF2RoundCheckPending)
+	if (!event.GetBool("full_round"))
 	{
 		return;
 	}
 
-	g_TF2RoundCheckPending = true;
-	RequestFrame(Frame_CheckTF2RoundLimit);
-}
-
-public void Frame_CheckTF2RoundLimit(any data)
-{
-	g_TF2RoundCheckPending = false;
-	g_TotalRounds = GameRules_GetProp("m_nRoundsPlayed");
+	g_TotalRounds++;
 
 	if (!g_MapList.Length
 		|| g_HasVoteStarted
