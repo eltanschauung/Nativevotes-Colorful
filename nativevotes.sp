@@ -129,8 +129,6 @@ char g_LeaderList[1024];
 int g_UncountedMapVotes;
 bool g_MapVoteFailOpenUnavailableLogged;
 Handle g_ProgressBuilderForward;
-bool g_ProgressUsesWeights;
-int g_ProgressWeightedTotal;
 
 ConVar sv_vote_holder_may_vote_no;
 
@@ -1079,28 +1077,12 @@ void DrawHintProgress()
 	int iTimeRemaining = RoundFloat(timeRemaining);
 
 	BuildVoteLeaders();
-	if (g_ProgressUsesWeights)
-	{
-		PrintHintTextToAll(
-			"%t\nWeighted votes: %d%s",
-			"Vote Count",
-			g_NumVotes,
-			g_TotalClients,
-			iTimeRemaining,
-			g_ProgressWeightedTotal,
-			g_LeaderList);
-	}
-	else
-	{
-		PrintHintTextToAll("%t%s", "Vote Count", g_NumVotes, g_TotalClients, iTimeRemaining, g_LeaderList);
-	}
+	PrintHintTextToAll("%t%s", "Vote Count", g_NumVotes, g_TotalClients, iTimeRemaining, g_LeaderList);
 }
 
 void BuildVoteLeaders()
 {
 	g_LeaderList[0] = '\0';
-	g_ProgressUsesWeights = false;
-	g_ProgressWeightedTotal = g_NumVotes;
 	if (g_NumVotes == 0 || !g_ConVars[progress_hintbox].BoolValue)
 	{
 		return;
@@ -1113,7 +1095,8 @@ void BuildVoteLeaders()
 		itemVotes[item] = g_hVotes.Get(item);
 	}
 
-	g_ProgressUsesWeights = BuildWeightedVoteProgress(itemVotes, g_Items, g_ProgressWeightedTotal);
+	int weightedVoteTotal = g_NumVotes;
+	BuildWeightedVoteProgress(itemVotes, g_Items, weightedVoteTotal);
 
 	int[][] votes = new int[slots][2];
 	int numItems;
@@ -1786,8 +1769,6 @@ void Internal_Reset(bool cancel=false)
 	g_bCancelled = false;
 	g_LeaderList[0] = '\0';
 	g_TotalClients = 0;
-	g_ProgressUsesWeights = false;
-	g_ProgressWeightedTotal = 0;
 	
 	if (g_hDisplayTimer != null)
 	{
