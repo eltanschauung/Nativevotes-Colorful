@@ -203,7 +203,7 @@ public void OnPluginStart()
 	MapEval_Init();
 
 	g_ConVars[mapvote_endvote] 		 		= CreateConVar("sm_mapvote_endvote", "1", "Specifies if MapChooser should run an end of map vote.", _, true, 0.0, true, 1.0);
-	g_ConVars[mapvote_start] 		 		= CreateConVar("sm_mapvote_start", "3.0", "Specifies when to start the vote based on time remaining.", _, true, 1.0);
+	g_ConVars[mapvote_start] 		 		= CreateConVar("sm_mapvote_start", "5.0", "Specifies when to start the vote based on time remaining.", _, true, 1.0);
 	g_ConVars[mapvote_startround]    		= CreateConVar("sm_mapvote_startround", "2.0", "Specifies when to start the vote based on rounds remaining. Use '0' on TF2 to start vote during bonus round time", _, true, 0.0);
 	g_ConVars[mapvote_startfrags]    		= CreateConVar("sm_mapvote_startfrags", "5.0", "Specifies when to start the vote base on frags remaining.", _, true, 1.0);
 	g_ConVars[extendmap_timestep]    		= CreateConVar("sm_extendmap_timestep", "15", "Specifies how much many more minutes each extension makes.", _, true, 5.0);
