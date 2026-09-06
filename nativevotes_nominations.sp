@@ -95,6 +95,9 @@ StringMap g_MapTrie = null;
 
 // NativeVotes
 bool g_NativeVotes;
+ConVar g_NextMapConVar;
+bool g_NextMapAnnouncementsReady;
+bool g_AutomaticNextMapChange;
 bool g_RegisteredMenusChangeLevel = false;
 bool g_RegisteredMenusNextLevel = false;
 
@@ -112,6 +115,10 @@ public void OnPluginStart()
 	LoadTranslations("common.phrases");
 	LoadTranslations("nominations.phrases");
 	NativeVoteStats_Init();
+	// sm_nextmap is created by SourceMod core, not by nextmap.smx.
+	g_NextMapConVar = FindConVar("sm_nextmap");
+	if (g_NextMapConVar != null)
+		g_NextMapConVar.AddChangeHook(ConVarChanged_NextMap);
 	
 	g_MapList = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
 	g_RandomNominationList = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
@@ -149,6 +156,37 @@ public void OnPluginStart()
 		g_iRandomNominateUserId[i] = 0;
 		g_szRandomNominateMap[i][0] = '\0';
 	}
+}
+
+public void OnMapStart()
+{
+	g_NextMapAnnouncementsReady = false;
+	g_AutomaticNextMapChange = false;
+}
+
+public void OnMapEnd()
+{
+	g_NextMapAnnouncementsReady = false;
+	g_AutomaticNextMapChange = false;
+}
+
+// MapChooser brackets its automatic SetNextMap calls with this forward.
+// A convar change hook itself has no caller identity: this explicit scope
+// handles direct console/RCON, sm_cvar, and sm_setnextmap equally well.
+public void OnNativeVotesAutomaticNextMap(bool setting)
+{
+	g_AutomaticNextMapChange = setting;
+}
+
+public void ConVarChanged_NextMap(ConVar convar, const char[] oldValue, const char[] newValue)
+{
+	if (!g_NextMapAnnouncementsReady || g_AutomaticNextMapChange
+		|| !newValue[0] || StrEqual(oldValue, newValue))
+		return;
+
+	char displayName[PLATFORM_MAX_PATH];
+	GetMapDisplayName(newValue, displayName, sizeof(displayName));
+	CPrintToChatAll("{lightgreen}[Nominations]{default} Next map changed to {gold}%s{default}!", displayName);
 }
 
 public void OnPluginEnd()
@@ -206,6 +244,7 @@ public void OnLibraryRemoved(const char[] name)
 
 public void OnConfigsExecuted()
 {
+	g_NextMapAnnouncementsReady = true;
 	if (!ReloadNominationMapList(false))
 	{
 		SetFailState("Unable to create a valid map list.");

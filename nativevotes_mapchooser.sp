@@ -35,6 +35,7 @@
  */
  
 #include <sourcemod>
+#include <sdktools>
 #include <mapchooser>
 #include <nextmap>
 #include <regex>
@@ -120,6 +121,8 @@ NativeVote g_VoteNative;
 
 int g_Extends;
 int g_TotalRounds;
+bool g_IsTF2;
+GlobalForward g_AutomaticNextMapForward;
 bool g_HasVoteStarted;
 bool g_WaitingForVote;
 bool g_MapVoteCompleted;
@@ -194,6 +197,7 @@ public void OnPluginStart()
 	{
 		engine = Engine_TF2;
 	}
+	g_IsTF2 = (engine == Engine_TF2);
 	int arraySize = ByteCountToCells(PLATFORM_MAX_PATH);
 	g_MapList = new ArrayList(arraySize);
 	g_NominateList = new ArrayList(arraySize);
@@ -275,6 +279,7 @@ public void OnPluginStart()
 	
 	g_NominationsResetForward = CreateGlobalForward("OnNominationRemoved", ET_Ignore, Param_String, Param_Cell);
 	g_MapVoteStartedForward   = CreateGlobalForward("OnMapVoteStarted", ET_Ignore);
+	g_AutomaticNextMapForward = new GlobalForward("OnNativeVotesAutomaticNextMap", ET_Ignore, Param_Cell);
 }
 
 public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max)
@@ -373,7 +378,7 @@ public void OnConfigsExecuted()
 		}
 	}
 
-	g_TotalRounds = 0;
+	g_TotalRounds = g_IsTF2 ? GameRules_GetProp("m_nRoundsPlayed") : 0;
 	g_Extends = 0;
 	g_MapVoteCompleted = false;
 	g_HasVoteStarted = false;
@@ -494,6 +499,17 @@ public Action Command_SetNextMap(int client, int args)
 	return Plugin_Handled;
 }
 
+void SetAutomaticNextMap(const char[] map)
+{
+	Call_StartForward(g_AutomaticNextMapForward);
+	Call_PushCell(true);
+	Call_Finish();
+	SetNextMap(map);
+	Call_StartForward(g_AutomaticNextMapForward);
+	Call_PushCell(false);
+	Call_Finish();
+}
+
 public void OnMapTimeLeftChanged()
 {
 	if (g_MapList.Length)
@@ -510,22 +526,17 @@ void SetupTimeleftTimer()
 		g_VoteTimer = null;
 	}
 
-	if (!CanStartEndMapVote())
-	{
-		return;
-	}
-
-	if (IsTimeleftVoteDue() && HasHumanClientInGame())
-	{
-		InitiateVote(MapChange_MapEnd, null);
-		return;
-	}
-
+	// Always establish the retry/watchdog timer before an immediate attempt.
+	// A failed display or an already-running vote must not strand the trigger.
 	g_VoteTimer = CreateTimer(
 		MAPVOTE_TIME_CHECK_INTERVAL,
 		Timer_CheckMapVoteTime,
 		_,
 		TIMER_REPEAT | TIMER_FLAG_NO_MAPCHANGE);
+
+	if (CanStartEndMapVote() && HasHumanClientInGame()
+		&& (IsTF2RoundVoteDue() || IsTimeleftVoteDue()))
+		InitiateVote(MapChange_MapEnd, null);
 }
 
 bool CanStartEndMapVote()
@@ -540,8 +551,53 @@ bool CanStartEndMapVote()
 bool IsTimeleftVoteDue()
 {
 	int time;
-	return GetMapTimeLeft(time)
-		&& time <= g_ConVars[mapvote_start].IntValue * 60;
+	// TF2 ends maps using this deadline, not SourceMod's separate game-start
+	// clock (which can differ after restarts and late plugin loads).
+	if (g_IsTF2)
+	{
+		int limit;
+		if (!GetMapTimeLimit(limit) || limit <= 0)
+			return false;
+		time = RoundToFloor(GameRules_GetPropFloat("m_flMapResetTime") + float(limit * 60) - GetGameTime());
+	}
+	else if (!GetMapTimeLeft(time))
+	{
+		return false;
+	}
+	return time <= g_ConVars[mapvote_start].IntValue * 60;
+}
+
+bool IsTF2RoundVoteDue()
+{
+	if (!g_IsTF2)
+		return false;
+
+	// Read the engine's actual map round count, including rounds before a
+	// plugin reload. Never infer it from win panels or a local event counter.
+	g_TotalRounds = GameRules_GetProp("m_nRoundsPlayed");
+	int threshold = g_ConVars[mapvote_startround].IntValue;
+	int maxRounds = g_ConVars[mp_maxrounds] != null ? g_ConVars[mp_maxrounds].IntValue : 0;
+	if (maxRounds > 0 && maxRounds - g_TotalRounds <= threshold)
+		return true;
+
+	int winLimit = g_ConVars[mp_winlimit] != null ? g_ConVars[mp_winlimit].IntValue : 0;
+	return winLimit > 0 && (winLimit - GetTeamScore(2) <= threshold || winLimit - GetTeamScore(3) <= threshold);
+}
+
+public void Frame_CheckTF2RoundLimits(any data)
+{
+	if (!g_IsTF2 || !IsServerProcessing())
+		return;
+
+	bool due = IsTF2RoundVoteDue();
+	char details[255];
+	FormatEx(details, sizeof(details), "rounds=%d|maxrounds=%d|red=%d|blue=%d|winlimit=%d|startround=%d|due=%d|started=%d|completed=%d|waiting=%d",
+		g_TotalRounds, g_ConVars[mp_maxrounds].IntValue, GetTeamScore(2), GetTeamScore(3),
+		g_ConVars[mp_winlimit].IntValue, g_ConVars[mapvote_startround].IntValue,
+		due, g_HasVoteStarted, g_MapVoteCompleted, g_WaitingForVote);
+	NativeVoteStats_LogEvent("round_limits", "", 0, -1, 0, 0, 0, details);
+	if (due && CanStartEndMapVote() && HasHumanClientInGame())
+		InitiateVote(MapChange_MapEnd, null);
 }
 
 bool HasHumanClientInGame()
@@ -560,24 +616,21 @@ bool HasHumanClientInGame()
 public Action Timer_CheckMapVoteTime(Handle timer)
 {
 	if (timer != g_VoteTimer)
-	{
 		return Plugin_Stop;
-	}
 
-	if (!CanStartEndMapVote())
-	{
-		g_VoteTimer = null;
-		return Plugin_Stop;
-	}
-
-	if (!IsTimeleftVoteDue() || !HasHumanClientInGame())
-	{
+	// Keep polling through temporary vote contention, display failures and
+	// cancellations. Otherwise one failed attempt disables automatic voting.
+	if (!CanStartEndMapVote() || !HasHumanClientInGame())
 		return Plugin_Continue;
-	}
 
-	g_VoteTimer = null;
-	InitiateVote(MapChange_MapEnd, null);
-	return Plugin_Stop;
+	bool roundsDue = IsTF2RoundVoteDue();
+	bool timeDue = IsTimeleftVoteDue();
+	if (roundsDue || timeDue)
+	{
+		NativeVoteStats_LogEvent("auto_vote_due", "", 0, -1, 0, 0, 0, roundsDue ? "round_limit" : "time_limit");
+		InitiateVote(MapChange_MapEnd, null);
+	}
+	return Plugin_Continue;
 }
 
 public Action Timer_StartMapVote(Handle timer, DataPack data)
@@ -607,28 +660,14 @@ public Action Timer_StartMapVote(Handle timer, DataPack data)
 
 public void Event_TeamplayRestartRound(Event event, const char[] name, bool dontBroadcast)
 {
-	/* Game got restarted - reset our round count tracking */
-	g_TotalRounds = 0;
+	/* Read after the engine has finished updating/resetting its counters. */
+	RequestFrame(Frame_CheckTF2RoundLimits);
 }
 
 public void Event_TeamplayRoundWin(Event event, const char[] name, bool dontBroadcast)
 {
-	if (!event.GetBool("full_round"))
-	{
-		return;
-	}
-
-	g_TotalRounds++;
-
-	if (!g_MapList.Length
-		|| g_HasVoteStarted
-		|| g_MapVoteCompleted
-		|| !g_ConVars[mapvote_endvote].BoolValue)
-	{
-		return;
-	}
-
-	CheckMaxRounds(g_TotalRounds);
+	if (event.GetBool("full_round"))
+		RequestFrame(Frame_CheckTF2RoundLimits);
 }
 
 public void Event_TeamplayWinPanel(Event event, const char[] name, bool dontBroadcast)
@@ -788,6 +827,9 @@ public Action Command_MapVote(int client, int args)
  */
 void InitiateVote(MapChange when, ArrayList inputlist=null)
 {
+	if (g_HasVoteStarted || g_WaitingForVote || (g_MapVoteCompleted && g_ChangeMapInProgress))
+		return;
+
 	g_WaitingForVote = true;
 	
 	if ((g_NativeVotes && NativeVotes_IsVoteInProgress()) || (!g_NativeVotes && IsVoteInProgress()))
@@ -801,12 +843,6 @@ void InitiateVote(MapChange when, ArrayList inputlist=null)
 		data.WriteCell(when);
 		data.WriteCell(inputlist);
 		data.Reset();
-		return;
-	}
-	
-	/* If the main map vote has completed (and chosen result) and its currently changing (not a delayed change) we block further attempts */
-	if (g_MapVoteCompleted && g_ChangeMapInProgress)
-	{
 		return;
 	}
 	
@@ -1392,7 +1428,7 @@ public void Handler_VoteFinishedGenericShared(const char[] map, const char[] dis
 	{
 		if (g_ChangeTime == MapChange_MapEnd)
 		{
-			SetNextMap(map);
+			SetAutomaticNextMap(map);
 		}
 		else if (g_ChangeTime == MapChange_Instant)
 		{
@@ -1403,7 +1439,7 @@ public void Handler_VoteFinishedGenericShared(const char[] map, const char[] dis
 		}
 		else // MapChange_RoundEnd
 		{
-			SetNextMap(map);
+			SetAutomaticNextMap(map);
 			g_ChangeMapAtRoundEnd = true;
 		}
 		
@@ -1622,7 +1658,7 @@ public int Handler_MapVoteMenu(Menu menu, MenuAction action, int param1, int par
 						menu.GetItem(item, map, sizeof(map));
 					}
 					
-					SetNextMap(map);
+					SetAutomaticNextMap(map);
 					g_MapVoteCompleted = true;
 					NativeVoteStats_LogEvent("vote_winner", map, 0, item, 0, 0, NativeVoteStats_CountHumanClients(), "random_no_votes");
 				}
@@ -1692,7 +1728,7 @@ public int Handler_NV_MapVoteMenu(NativeVote menu, MenuAction action, int param1
 						menu.GetItem(item, map, sizeof(map), displayName, sizeof(displayName));
 					}
 					
-					SetNextMap(map);
+					SetAutomaticNextMap(map);
 					g_MapVoteCompleted = true;
 					menu.DisplayPass(displayName);
 					NativeVoteStats_LogEvent("vote_winner", map, 0, item, 0, 0, NativeVoteStats_CountHumanClients(), "random_no_votes");
