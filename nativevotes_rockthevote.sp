@@ -34,6 +34,7 @@
  */
 
 #include <sourcemod>
+#include <sdktools>
 #include <mapchooser>
 #include <nextmap>
 
@@ -94,6 +95,8 @@ enum
 
 ConVar g_ConVars[MAX_CONVARS];
 ConVar g_MapVoteMinPlaytimeHours = null;
+ConVar g_MaxRounds = null;
+ConVar g_WinLimit = null;
 Handle g_RTVVoterRefreshTimer = INVALID_HANDLE;
 
 bool g_RTVAllowed = false;					// True if RTV is available to players. Used to delay rtv votes.
@@ -129,6 +132,8 @@ public void OnPluginStart()
 	g_ConVars[postvoteaction] = CreateConVar("sm_rtv_postvoteaction", "0", "What to do with RTV's after a mapvote has completed. 0 - Allow, success = instant change, 1 - Deny", _, true, 0.0, true, 1.0);
 	g_ConVars[connectdelay] = CreateConVar("sm_rtv_connect_delay", "60", "Seconds a client must be connected before they can use RTV. 0 disables the gate.", _, true, 0.0, true, 3600.0);
 	g_MapVoteMinPlaytimeHours = FindConVar("nativevotes_mapvote_min_playtime_hours");
+	g_MaxRounds = FindConVar("mp_maxrounds");
+	g_WinLimit = FindConVar("mp_winlimit");
 	
 	RegConsoleCmd("sm_rtv", Command_RTV);
 	RegConsoleCmd("sm_rockthevote", Command_RTV);
@@ -136,6 +141,10 @@ public void OnPluginStart()
 	RegConsoleCmd("sm_silentrtv", Command_SilentRTV);
 	RegConsoleCmd("sm_unrtv", Command_UnRTV);
 	RegConsoleCmd("sm_rtvp", Command_RTVProgress, "Show current rock-the-vote progress.");
+	RegConsoleCmd("sm_timeleft", Command_TimeLeftSummary, "Show map time, rounds, and RTV progress.");
+	AddCommandListener(CommandListener_TimeLeftCommand, "sm_timeleft");
+	AddCommandListener(CommandListener_TimeLeftChat, "say");
+	AddCommandListener(CommandListener_TimeLeftChat, "say_team");
 	RegAdminCmd("sm_forcertv", Command_ForceRTV, ADMFLAG_CHANGEMAP);
 	RegAdminCmd("sm_resetrtv", Command_ResetRTV, ADMFLAG_CHANGEMAP);
 	
@@ -416,6 +425,122 @@ public Action Command_RTVProgress(int client, int args)
 	}
 
 	return Plugin_Handled;
+}
+
+int GetRoundsRemaining()
+{
+	int roundsRemaining = -1;
+
+	if (GetEngineVersion() == Engine_TF2 && g_MaxRounds != null)
+	{
+		int maxRounds = g_MaxRounds.IntValue;
+		if (maxRounds > 0)
+		{
+			int roundsPlayed = GameRules_GetProp("m_nRoundsPlayed");
+			roundsRemaining = maxRounds - roundsPlayed;
+			if (roundsRemaining < 0)
+			{
+				roundsRemaining = 0;
+			}
+		}
+	}
+
+	if (g_WinLimit != null && g_WinLimit.IntValue > 0)
+	{
+		int leadingScore = GetTeamScore(2);
+		int blueScore = GetTeamScore(3);
+		if (blueScore > leadingScore)
+		{
+			leadingScore = blueScore;
+		}
+
+		int winsRemaining = g_WinLimit.IntValue - leadingScore;
+		if (winsRemaining < 0)
+		{
+			winsRemaining = 0;
+		}
+
+		if (roundsRemaining < 0 || winsRemaining < roundsRemaining)
+		{
+			roundsRemaining = winsRemaining;
+		}
+	}
+
+	return roundsRemaining > 0 ? roundsRemaining : 0;
+}
+
+void ReplyTimeLeftSummary(int client)
+{
+	int timeRemaining;
+	char formattedTime[24];
+	if (GetMapTimeLeft(timeRemaining))
+	{
+		if (timeRemaining < 0)
+		{
+			timeRemaining = 0;
+		}
+		FormatEx(formattedTime, sizeof(formattedTime), "%d:%02d", timeRemaining / 60, timeRemaining % 60);
+	}
+	else
+	{
+		strcopy(formattedTime, sizeof(formattedTime), "N/A");
+	}
+
+	RecalculateRTVVoters();
+	int roundsRemaining = GetRoundsRemaining();
+
+	if (client == 0)
+	{
+		ReplyToCommand(client,
+			"[Mapchooser] Time remaining: %s Rounds remaining: %d rtv Progress: %d/%d",
+			formattedTime,
+			roundsRemaining,
+			g_Votes,
+			g_VotesNeeded);
+		return;
+	}
+
+	CReplyToCommand(client,
+		"{lightgreen}[Mapchooser]{gold} Time remaining: {default}%s {gold} Rounds remaining: {default}%d {gold} rtv Progress: {default} %d/%d",
+		formattedTime,
+		roundsRemaining,
+		g_Votes,
+		g_VotesNeeded);
+}
+
+public Action Command_TimeLeftSummary(int client, int args)
+{
+	ReplyTimeLeftSummary(client);
+	return Plugin_Handled;
+}
+
+public Action CommandListener_TimeLeftCommand(int client, const char[] command, int argc)
+{
+	ReplyTimeLeftSummary(client);
+	return Plugin_Handled;
+}
+
+public Action CommandListener_TimeLeftChat(int client, const char[] command, int argc)
+{
+	if (client <= 0 || !IsClientInGame(client))
+	{
+		return Plugin_Continue;
+	}
+
+	char message[32];
+	GetCmdArgString(message, sizeof(message));
+	StripQuotes(message);
+	TrimString(message);
+
+	if (!StrEqual(message, "timeleft", false))
+	{
+		return Plugin_Continue;
+	}
+
+	ReplySource oldSource = SetCmdReplySource(SM_REPLY_TO_CHAT);
+	ReplyTimeLeftSummary(client);
+	SetCmdReplySource(oldSource);
+	return Plugin_Continue;
 }
 
 bool CanUseRequestedSilentRTVWeight(int client, int requestedWeight)
