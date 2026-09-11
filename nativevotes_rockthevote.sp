@@ -58,6 +58,7 @@ native bool WhaleTracker_HasPlaytimeHours(int client, int hours);
 #define RTV_VOTER_REFRESH_INTERVAL 5.0
 #define RTV_COMMAND_COOLDOWN_MAX 15
 #define RTV_COMMAND_COOLDOWN_RESET 30.0
+#define RTV_PLAYTIME_LOW_POP_BYPASS 5
 
 #pragma semicolon 1
 #pragma newdecls required
@@ -898,6 +899,11 @@ bool IsRTVEligibleClient(int client)
 	if (client <= 0 || client > MaxClients || !IsClientInGame(client) || IsFakeClient(client))
 	{
 		return false;
+	}
+
+	if (GetClientCount(false) < RTV_PLAYTIME_LOW_POP_BYPASS)
+	{
+		return true;
 	}
 
 	int requiredHours = GetRTVMinPlaytimeHours();
