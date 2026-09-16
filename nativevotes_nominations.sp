@@ -597,7 +597,6 @@ public Action Command_Nominate(int client, int args)
 		CPrintToChat(client,
 			"{lightgreen}[Nominations]{default} Next map ({gold}%s{default}) is already set.",
 			nextMapDisplayName);
-		return Plugin_Handled;
 	}
 
 	if (!CanUseNominationCommands(client))
