@@ -98,6 +98,7 @@ bool g_NativeVotes;
 ConVar g_NextMapConVar;
 bool g_NextMapAnnouncementsReady;
 bool g_AutomaticNextMapChange;
+char g_VotedNextMapThisMap[PLATFORM_MAX_PATH];
 bool g_RegisteredMenusChangeLevel = false;
 bool g_RegisteredMenusNextLevel = false;
 
@@ -141,6 +142,7 @@ public void OnPluginStart()
 	RegConsoleCmd("sm_noms", Command_ShowNominations);
 	RegConsoleCmd("sm_nominations", Command_ShowNominations);
 	RegConsoleCmd("sm_ns", Command_ShowNominations);
+	RegConsoleCmd("sm_maplist", Command_MapList);
 	AddCommandListener(CommandListener_ShowNominations, "say");
 	AddCommandListener(CommandListener_ShowNominations, "say_team");
 	
@@ -162,12 +164,14 @@ public void OnMapStart()
 {
 	g_NextMapAnnouncementsReady = false;
 	g_AutomaticNextMapChange = false;
+	g_VotedNextMapThisMap[0] = 0;
 }
 
 public void OnMapEnd()
 {
 	g_NextMapAnnouncementsReady = false;
 	g_AutomaticNextMapChange = false;
+	g_VotedNextMapThisMap[0] = 0;
 }
 
 // MapChooser brackets its automatic SetNextMap calls with this forward.
@@ -176,10 +180,21 @@ public void OnMapEnd()
 public void OnNativeVotesAutomaticNextMap(bool setting)
 {
 	g_AutomaticNextMapChange = setting;
+	if (!setting && g_NextMapConVar != null)
+	{
+		g_NextMapConVar.GetString(g_VotedNextMapThisMap,
+			sizeof(g_VotedNextMapThisMap));
+		TrimString(g_VotedNextMapThisMap);
+	}
 }
 
 public void ConVarChanged_NextMap(ConVar convar, const char[] oldValue, const char[] newValue)
 {
+	if (!g_AutomaticNextMapChange && !StrEqual(oldValue, newValue))
+	{
+		g_VotedNextMapThisMap[0] = 0;
+	}
+
 	if (!g_NextMapAnnouncementsReady || g_AutomaticNextMapChange
 		|| !newValue[0] || StrEqual(oldValue, newValue))
 		return;
@@ -374,8 +389,65 @@ Action Command_ReloadNominations(int client, int args)
 	return Plugin_Handled;
 }
 
+bool GetNextMapDisplayName(char[] displayName, int maxLength)
+{
+	displayName[0] = 0;
+	if (g_NextMapConVar == null || !g_VotedNextMapThisMap[0])
+	{
+		return false;
+	}
+
+	char nextMap[PLATFORM_MAX_PATH];
+	g_NextMapConVar.GetString(nextMap, sizeof(nextMap));
+	TrimString(nextMap);
+	if (!nextMap[0])
+	{
+		return false;
+	}
+
+	if (!StrEqual(nextMap, g_VotedNextMapThisMap, false))
+	{
+		return false;
+	}
+
+	GetMapDisplayName(nextMap, displayName, maxLength);
+	return true;
+}
+
+public Action Command_MapList(int client, int args)
+{
+	if (client <= 0 || !IsClientInGame(client))
+	{
+		return Plugin_Handled;
+	}
+
+	if (g_MapList == null || g_MapList.Length == 0)
+	{
+		CPrintToChat(client,
+			"{lightgreen}[Nominations]{default} No maps are available.");
+		return Plugin_Handled;
+	}
+
+	char map[PLATFORM_MAX_PATH];
+	for (int i = 0; i < g_MapList.Length; i++)
+	{
+		g_MapList.GetString(i, map, sizeof(map));
+		CPrintToChat(client, "%s", map);
+	}
+
+	return Plugin_Handled;
+}
+
 public Action Command_ShowNominations(int client, int args)
 {
+	char configuredNextMap[PLATFORM_MAX_PATH];
+	if (GetNextMapDisplayName(configuredNextMap, sizeof(configuredNextMap)))
+	{
+		CPrintToChatAll("{lightgreen}[Nominations]{default} The next map is: {gold}%s",
+			configuredNextMap);
+		return Plugin_Handled;
+	}
+
 	SyncNominatedMapStatuses();
 
 	ArrayList maps = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
@@ -516,6 +588,15 @@ public Action Command_Nominate(int client, int args)
 {
 	if (!client)
 	{
+		return Plugin_Handled;
+	}
+
+	char nextMapDisplayName[PLATFORM_MAX_PATH];
+	if (GetNextMapDisplayName(nextMapDisplayName, sizeof(nextMapDisplayName)))
+	{
+		CPrintToChat(client,
+			"{lightgreen}[Nominations]{default} Next map ({gold}%s{default}) is already set.",
+			nextMapDisplayName);
 		return Plugin_Handled;
 	}
 
