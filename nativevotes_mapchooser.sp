@@ -1842,7 +1842,8 @@ void CreateNextVote()
 	
 	if (g_ConVars[mapvote_exclude].IntValue && tempMaps.Length > g_ConVars[mapvote_exclude].IntValue)
 	{
-		for (int i = 0; i < g_OldMapList.Length; i++)
+		int validStart = g_OldMapList.Length - g_RecentMapHistoryValidCount;
+		for (int i = validStart; i < g_OldMapList.Length; i++)
 		{
 			g_OldMapList.GetString(i, map, sizeof(map));
 			RemoveStringFromArray(tempMaps, map);

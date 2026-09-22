@@ -809,6 +809,7 @@ int FindMatchingMaps(ArrayList mapList, ArrayList results, const char[] input)
 
 void AttemptNominate(int client, const char[] map, int size, bool isVoteMenu)
 {
+	RefreshRecentlyPlayedMapStatuses();
 	float startedAt = GetEngineTime();
 	char mapname[PLATFORM_MAX_PATH];
 	if (FindMap(map, mapname, size) == FindMap_NotFound)
@@ -1402,6 +1403,8 @@ public Action NativeVotes_OverrideMaps(StringMap mapList)
 	{
 		BuildMapMenu();
 	}
+	RefreshRecentlyPlayedMapStatuses();
+	SyncNominatedMapStatuses();
 	
 	if (g_MapTrie.Size == 0)
 	{
