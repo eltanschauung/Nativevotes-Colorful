@@ -282,7 +282,7 @@ public void OnClientDisconnect(int client)
 	if (g_Votes && 
 		g_Voters && 
 		g_Votes >= g_VotesNeeded && 
-		g_RTVAllowed ) 
+		!IsRTVTimeDelayBlocking())
 	{
 		if (g_ConVars[postvoteaction].IntValue == 1 && HasEndOfMapVoteFinished())
 		{
@@ -592,6 +592,17 @@ void ResetRTVCommandCooldowns()
 	}
 }
 
+bool IsRTVTimeDelayBlocking()
+{
+	if (g_RTVAllowed)
+	{
+		return false;
+	}
+
+	// A solo client can RTV during the map-start and retry timers.
+	return GetClientCount(false) >= 2 || g_RTVTime <= 0 || g_InChange;
+}
+
 public Action Command_ForceRTV(int client, int args)
 {
 	if (!g_RTVAllowed)
@@ -619,7 +630,7 @@ void AttemptUnRTV(int client)
 	RecalculateRTVVoters();
 
 	bool postVoteDenied = g_ConVars[postvoteaction].IntValue == 1 && HasEndOfMapVoteFinished();
-	if (!g_RTVAllowed || postVoteDenied)
+	if (IsRTVTimeDelayBlocking() || postVoteDenied)
 	{
 		ReplyRTVUnavailable(client, postVoteDenied);
 		return;
@@ -649,7 +660,7 @@ void AttemptUnRTV(int client)
 void AttemptRTV(int client, bool isVoteMenu=false, bool silent=false, int requestedWeight=0)
 {
 	bool postVoteDenied = g_ConVars[postvoteaction].IntValue == 1 && HasEndOfMapVoteFinished();
-	if (!g_RTVAllowed || postVoteDenied)
+	if (IsRTVTimeDelayBlocking() || postVoteDenied)
 	{
 		int timeleft = ReplyRTVUnavailable(client, postVoteDenied);
 		if (isVoteMenu && g_NativeVotes)
