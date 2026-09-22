@@ -305,14 +305,6 @@ public void OnClientDisconnect(int client)
 	ClearPendingRandomNomination(client);
 }
 
-public void OnClientDisconnect_Post(int client)
-{
-	if (GetClientCount(false) == 0)
-	{
-		ClearRecentlyPlayedMapStatuses();
-	}
-}
-
 void ClearPendingRandomNomination(int client)
 {
 	if (client <= 0 || client > MaxClients)
@@ -705,6 +697,9 @@ public Action Command_Unnominate(int client, int args)
 
 void QueueRandomNomination(int client)
 {
+	RefreshRecentlyPlayedMapStatuses();
+	SyncNominatedMapStatuses();
+
 	if (g_MapList == null || g_MapList.Length == 0)
 	{
 		CReplyToCommand(client, "[{lightgreen}Nominations\x01] No maps available to nominate.");
@@ -718,12 +713,7 @@ void QueueRandomNomination(int client)
 		g_MapList.GetString(i, map, sizeof(map));
 		FindMap(map, map, sizeof(map));
 
-		int status;
-		if (!g_MapTrie.GetValue(map, status))
-		{
-			continue;
-		}
-		if ((status & MAPSTATUS_DISABLED) == MAPSTATUS_DISABLED)
+		if (!IsMapEnabledForNomination(map))
 		{
 			continue;
 		}
@@ -930,6 +920,7 @@ void AttemptNominate(int client, const char[] map, int size, bool isVoteMenu)
 void OpenNominationMenu(int client)
 {
 	float startedAt = GetEngineTime();
+	RefreshRecentlyPlayedMapStatuses();
 	SyncNominatedMapStatuses();
 	g_MapMenu.SetTitle("%t", "Nominate Title", client);
 	g_MapMenu.Display(client, MENU_TIME_FOREVER);
@@ -938,6 +929,10 @@ void OpenNominationMenu(int client)
 
 void OpenRandomNominationMenu(int client)
 {
+	RefreshRecentlyPlayedMapStatuses();
+	SyncNominatedMapStatuses();
+	BuildRandomNominationList();
+
 	if (g_RandomNominationList == null || g_RandomNominationList.Length == 0)
 	{
 		CReplyToCommand(client, "[{lightgreen}Nominations\x01] No maps available to nominate.");
@@ -973,30 +968,44 @@ void BuildRandomNominationList()
 		return;
 	}
 
-	ArrayList indices = new ArrayList();
+	ArrayList candidates = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
+	char map[PLATFORM_MAX_PATH];
 	for (int i = 0; i < g_MapList.Length; i++)
 	{
-		indices.Push(i);
+		g_MapList.GetString(i, map, sizeof(map));
+		FindMap(map, map, sizeof(map));
+		if (IsMapEnabledForNomination(map))
+		{
+			candidates.PushString(map);
+		}
 	}
 
-	for (int i = indices.Length - 1; i > 0; i--)
+	for (int i = candidates.Length - 1; i > 0; i--)
 	{
 		int swapIndex = GetRandomInt(0, i);
-		int current = indices.Get(i);
-		indices.Set(i, indices.Get(swapIndex));
-		indices.Set(swapIndex, current);
+		char current[PLATFORM_MAX_PATH];
+		char other[PLATFORM_MAX_PATH];
+		candidates.GetString(i, current, sizeof(current));
+		candidates.GetString(swapIndex, other, sizeof(other));
+		candidates.SetString(i, other);
+		candidates.SetString(swapIndex, current);
 	}
 
-	char map[PLATFORM_MAX_PATH];
-	int limit = indices.Length < RANDOM_NOMINATION_MENU_SIZE ? indices.Length : RANDOM_NOMINATION_MENU_SIZE;
+	int limit = candidates.Length < RANDOM_NOMINATION_MENU_SIZE ? candidates.Length : RANDOM_NOMINATION_MENU_SIZE;
 	for (int i = 0; i < limit; i++)
 	{
-		g_MapList.GetString(indices.Get(i), map, sizeof(map));
-		FindMap(map, map, sizeof(map));
+		candidates.GetString(i, map, sizeof(map));
 		g_RandomNominationList.PushString(map);
 	}
 
-	delete indices;
+	delete candidates;
+}
+
+bool IsMapEnabledForNomination(const char[] map)
+{
+	int status;
+	return g_MapTrie.GetValue(map, status)
+		&& (status & MAPSTATUS_DISABLED) == 0;
 }
 
 void SyncNominatedMapStatuses()
@@ -1088,6 +1097,41 @@ void ClearRecentlyPlayedMapStatuses()
 	}
 
 	delete snapshot;
+}
+
+void RefreshRecentlyPlayedMapStatuses()
+{
+	ClearRecentlyPlayedMapStatuses();
+	if (!g_ConVars[excludeold].BoolValue || g_MapTrie == null)
+	{
+		return;
+	}
+
+	ArrayList excludeMaps = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
+	GetExcludeMapList(excludeMaps);
+
+	char map[PLATFORM_MAX_PATH];
+	char resolvedMap[PLATFORM_MAX_PATH];
+	for (int i = 0; i < excludeMaps.Length; i++)
+	{
+		excludeMaps.GetString(i, map, sizeof(map));
+		if (FindMap(map, resolvedMap, sizeof(resolvedMap)) == FindMap_NotFound)
+		{
+			strcopy(resolvedMap, sizeof(resolvedMap), map);
+		}
+
+		int status;
+		if (!g_MapTrie.GetValue(resolvedMap, status))
+		{
+			continue;
+		}
+
+		status &= ~MAPSTATUS_ENABLED;
+		status |= MAPSTATUS_DISABLED|MAPSTATUS_EXCLUDE_PREVIOUS;
+		g_MapTrie.SetValue(resolvedMap, status);
+	}
+
+	delete excludeMaps;
 }
 
 void SetMapNominatedStatus(const char[] map, bool nominated)

@@ -128,7 +128,6 @@ bool g_WaitingForVote;
 bool g_MapVoteCompleted;
 bool g_ChangeMapAtRoundEnd;
 bool g_ChangeMapInProgress;
-bool g_ServerBecameEmpty;
 int g_mapFileSerial = -1;
 
 MapChange g_ChangeTime;
@@ -176,6 +175,7 @@ stock void StopEmptyMapChangeTimer() {}
 public void ConVarChanged_EmptyMapChange(ConVar convar, const char[] oldValue, const char[] newValue) {}
 #endif
 
+#include "nativevotes_map_history.inc"
 
 public void OnPluginStart()
 {
@@ -234,6 +234,8 @@ public void OnPluginStart()
 	RegAdminCmd("sm_mapvote", Command_MapVote, ADMFLAG_CHANGEMAP, "Forces MapChooser to attempt to run a map vote now.");
 	RegAdminCmd("sm_setnextmap", Command_SetNextMap, ADMFLAG_CHANGEMAP, "sm_setnextmap <map>");
 	HookConVarChange(g_ConVars[nativevotes_emptymapchange], ConVarChanged_EmptyMapChange);
+	HookConVarChange(g_ConVars[mapvote_exclude], ConVarChanged_MapVoteExclude);
+	RecentMapHistory_Init();
 
 	g_ConVars[mp_winlimit]       = FindConVar("mp_winlimit");
 	g_ConVars[mp_maxrounds]      = FindConVar("mp_maxrounds");
@@ -357,6 +359,8 @@ public void OnLibraryRemoved(const char[] name)
 public void OnConfigsExecuted()
 {
 	LoadMapEvalConfig();
+	RecentMapHistory_Trim();
+	RecentMapHistory_Save();
 	UpdateCurrentMap();
 	UpdateGameModeFromMap();
 
@@ -417,20 +421,7 @@ public void OnMapEnd()
 	g_RetryTimer = null;
 	StopEmptyMapChangeTimer();
 
-	if (g_ServerBecameEmpty)
-	{
-		g_OldMapList.Clear();
-		return;
-	}
-	
-	char map[PLATFORM_MAX_PATH];
-	GetCurrentMap(map, sizeof(map));
-	g_OldMapList.PushString(map);
-				
-	while (g_OldMapList.Length > g_ConVars[mapvote_exclude].IntValue)
-	{
-		g_OldMapList.Erase(0);
-	}	
+	RecentMapHistory_RecordCurrentMap();
 }
 
 public void OnClientDisconnect(int client)
@@ -451,23 +442,6 @@ public void OnClientDisconnect(int client)
 	
 	g_NominateOwners.Erase(index);
 	g_NominateList.Erase(index);
-}
-
-public void OnClientDisconnect_Post(int client)
-{
-	if (GetClientCount(false) == 0)
-	{
-		g_OldMapList.Clear();
-		g_ServerBecameEmpty = true;
-	}
-}
-
-public void OnClientPutInServer(int client)
-{
-	if (!IsFakeClient(client))
-	{
-		g_ServerBecameEmpty = false;
-	}
 }
 
 public Action Command_SetNextMap(int client, int args)

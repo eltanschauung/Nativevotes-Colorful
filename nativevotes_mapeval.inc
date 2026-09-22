@@ -243,6 +243,7 @@ bool CopyRandomMapEvalMap(char[] buffer, int maxlen)
 
 			if (!mapName[0]
 				|| (g_CurrentMap[0] && StrEqual(mapName, g_CurrentMap, false))
+				|| RecentMapHistory_Contains(mapName)
 				|| !IsMapValid(mapName))
 			{
 				continue;
@@ -275,12 +276,7 @@ bool CopyRandomMapEvalMap(char[] buffer, int maxlen)
 
 bool IsMapEvalExcludedByHistory(const char[] mapName)
 {
-	if (g_ConVars[mapvote_exclude].IntValue <= 0)
-	{
-		return false;
-	}
-
-	return (g_OldMapList.FindString(mapName) != -1);
+	return RecentMapHistory_Contains(mapName);
 }
 
 void BuildMapEvalWeightPool(ArrayList maps, int requiredWeight, ArrayList pool, StringMap seen)
