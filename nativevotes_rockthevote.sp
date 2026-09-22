@@ -827,7 +827,8 @@ int ReplyRTVUnavailable(int client, bool postVoteDenied)
 int GetRTVConnectDelayRemaining(int client)
 {
 	int connectDelay = g_ConVars[connectdelay].IntValue;
-	if (connectDelay <= 0 || client <= 0 || client > MaxClients || !IsClientConnected(client))
+	if (connectDelay <= 0 || GetClientCount(false) < 2
+		|| client <= 0 || client > MaxClients || !IsClientConnected(client))
 	{
 		return 0;
 	}
