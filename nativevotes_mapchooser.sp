@@ -424,6 +424,19 @@ public void OnMapEnd()
 	RecentMapHistory_RecordCurrentMap();
 }
 
+public void OnClientPutInServer(int client)
+{
+	RecentMapHistory_CancelEmptyTimer();
+}
+
+public void OnClientDisconnect_Post(int client)
+{
+	if (GetClientCount(false) == 0)
+	{
+		RecentMapHistory_ArmEmptyTimer();
+	}
+}
+
 public void OnClientDisconnect(int client)
 {
 	int index = g_NominateOwners.FindValue(client);
@@ -2213,14 +2226,7 @@ public int Native_GetExcludeMapList(Handle plugin, int numParams)
 	{
 		return 0;	
 	}
-	int size = g_OldMapList.Length;
-	char map[PLATFORM_MAX_PATH];
-	
-	for (int i = 0; i < size; i++)
-	{
-		g_OldMapList.GetString(i, map, sizeof(map));
-		array.PushString(map);	
-	}
+	RecentMapHistory_CopyValid(array);
 	
 	return 0;
 }
