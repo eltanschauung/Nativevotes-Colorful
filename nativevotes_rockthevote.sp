@@ -592,6 +592,20 @@ void ResetRTVCommandCooldowns()
 	}
 }
 
+int CountRTVHumanPlayers()
+{
+	int count = 0;
+	for (int client = 1; client <= MaxClients; client++)
+	{
+		if (IsClientInGame(client) && !IsFakeClient(client)
+			&& !IsClientSourceTV(client) && !IsClientReplay(client))
+		{
+			count++;
+		}
+	}
+	return count;
+}
+
 bool IsRTVTimeDelayBlocking()
 {
 	if (g_RTVAllowed)
@@ -600,7 +614,7 @@ bool IsRTVTimeDelayBlocking()
 	}
 
 	// A solo client can RTV during the map-start and retry timers.
-	return GetClientCount(false) >= 2 || g_RTVTime <= 0 || g_InChange;
+	return CountRTVHumanPlayers() >= 2 || g_RTVTime <= 0 || g_InChange;
 }
 
 public Action Command_ForceRTV(int client, int args)
@@ -838,7 +852,7 @@ int ReplyRTVUnavailable(int client, bool postVoteDenied)
 int GetRTVConnectDelayRemaining(int client)
 {
 	int connectDelay = g_ConVars[connectdelay].IntValue;
-	if (connectDelay <= 0 || GetClientCount(false) < 2
+	if (connectDelay <= 0 || CountRTVHumanPlayers() < 2
 		|| client <= 0 || client > MaxClients || !IsClientConnected(client))
 	{
 		return 0;
@@ -913,7 +927,7 @@ bool IsRTVEligibleClient(int client)
 		return false;
 	}
 
-	if (GetClientCount(false) < RTV_PLAYTIME_LOW_POP_BYPASS)
+	if (CountRTVHumanPlayers() < RTV_PLAYTIME_LOW_POP_BYPASS)
 	{
 		return true;
 	}
