@@ -729,7 +729,18 @@ void AttemptRTV(int client, bool isVoteMenu=false, bool silent=false, int reques
 	if (!IsRTVEligibleClient(client))
 	{
 		NativeVoteStats_LogEvent("eligibility_failure", "", client, -1, 0, 0, g_Voters, "rtv_playtime");
-		CReplyToCommand(client, "[{lightgreen}Rock The Vote\x01] You need a higher playtime on this server to rock the vote");
+		if (!AreWhaleTrackerStatsAvailableForClient(client))
+		{
+			CReplyToCommand(client, "[{lightgreen}Rock The Vote\x01] Your playtime is still loading. Try again shortly.");
+		}
+		else
+		{
+			int requiredHours = GetRTVMinPlaytimeHours();
+			int currentHours = GetRTVCurrentPlaytimeHours(client, requiredHours);
+			CReplyToCommand(client,
+				"[{lightgreen}Rock The Vote\x01] You need a higher playtime on this server to rock the vote. Current playtime: {salmon}%dh{default}, required: {gold}%dh",
+				currentHours, requiredHours);
+		}
 		if (isVoteMenu && g_NativeVotes)
 		{
 			NativeVotes_DisplayCallVoteFail(client, NativeVotesCallFail_Generic);
@@ -911,6 +922,25 @@ int GetRTVMinPlaytimeHours()
 	}
 
 	return g_MapVoteMinPlaytimeHours.IntValue;
+}
+
+int GetRTVCurrentPlaytimeHours(int client, int requiredHours)
+{
+	int low = 0;
+	int high = requiredHours - 1;
+	while (low < high)
+	{
+		int middle = low + (high - low + 1) / 2;
+		if (WhaleTracker_HasPlaytimeHours(client, middle))
+		{
+			low = middle;
+		}
+		else
+		{
+			high = middle - 1;
+		}
+	}
+	return low;
 }
 
 bool IsWhaleTrackerPlaytimeGateAvailable()
