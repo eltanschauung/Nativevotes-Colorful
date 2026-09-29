@@ -45,6 +45,7 @@
 #include "nativevotes_statistics.inc"
 
 native int Filters_GetChatName(int client, char[] buffer, int maxlen);
+native void NativeVotes_GetRTVProgress(int &votes, int &needed);
 
 #pragma semicolon 1
 #pragma newdecls required
@@ -61,6 +62,7 @@ public Plugin myinfo =
 public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max)
 {
 	MarkNativeAsOptional("Filters_GetChatName");
+	MarkNativeAsOptional("NativeVotes_GetRTVProgress");
 	return APLRes_Success;
 }
 
@@ -462,13 +464,20 @@ public Action Command_ShowNominations(int client, int args)
 		return Plugin_Handled;
 	}
 
+	int rtvVotes = 0;
+	int rtvNeeded = 0;
+	if (GetFeatureStatus(FeatureType_Native, "NativeVotes_GetRTVProgress") == FeatureStatus_Available)
+	{
+		NativeVotes_GetRTVProgress(rtvVotes, rtvNeeded);
+	}
+
 	if (replyToConsole)
 	{
-		CReplyToCommand(client, "[{lightgreen}Nominations\x01] Current nominations, descending:");
+		CReplyToCommand(client, "[{lightgreen}Nominations\x01] RTV Progress: %d/%d", rtvVotes, rtvNeeded);
 	}
 	else
 	{
-		CPrintToChatEx(client, client, "[{lightgreen}Nominations\x01] Current nominations, descending:");
+		CPrintToChatEx(client, client, "[{lightgreen}Nominations\x01] RTV Progress: %d/%d", rtvVotes, rtvNeeded);
 	}
 
 	for (int i = maps.Length - 1; i >= 0; i--)

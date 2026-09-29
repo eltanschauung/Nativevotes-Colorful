@@ -74,6 +74,7 @@ public Plugin myinfo =
 
 public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max)
 {
+	CreateNative("NativeVotes_GetRTVProgress", Native_GetRTVProgress);
 	MarkNativeAsOptional("AdminsDB_GetClientWhitelistLevel");
 	MarkNativeAsOptional("Filters_GetChatName");
 	MarkNativeAsOptional("WhaleTracker_AreStatsLoaded");
@@ -117,6 +118,14 @@ bool g_NativeVotes;
 bool g_RegisteredMenusChangeLevel = false;
 int g_RTVTime = 0;
 bool g_Warmup = false;
+
+public int Native_GetRTVProgress(Handle plugin, int numParams)
+{
+	RecalculateRTVVoters();
+	SetNativeCellRef(1, g_Votes);
+	SetNativeCellRef(2, g_VotesNeeded);
+	return 0;
+}
 
 public void OnPluginStart()
 {
