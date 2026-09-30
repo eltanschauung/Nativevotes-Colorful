@@ -60,11 +60,6 @@ public Plugin myinfo =
 	url = "https://github.com/Heapons/sourcemod-nativevotes-updated/"
 };
 
-public Action Listener_Nominate(int client, const char[] command, int argc)
-{
-	return Command_Nominate(client, argc);
-}
-
 public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max)
 {
 	MarkNativeAsOptional("Filters_GetChatName");
@@ -142,7 +137,7 @@ public void OnPluginStart()
 	g_ConVars[nextlevel_allowed] = FindConVar("sv_vote_issue_nextlevel_allowed");
 
 	RegConsoleCmd("sm_nominate", Command_Nominate);
-	AddCommandListener(Listener_Nominate, "nominate");
+	RegConsoleCmd("nominate", Command_Nominate);
 	RegConsoleCmd("sm_n", Command_Nominate);
 	RegConsoleCmd("sm_nom", Command_Nominate);
 	RegConsoleCmd("sm_nr", Command_Nominate);
@@ -552,7 +547,7 @@ public void OnClientSayCommand_Post(int client, const char[] command, const char
 	{
 		ReplySource old = SetCmdReplySource(SM_REPLY_TO_CHAT);
 		
-		Command_Nominate(client, 0);
+		Nominations_HandleRequest(client, "nominate", "");
 		
 		SetCmdReplySource(old);
 	}
@@ -594,13 +589,17 @@ bool CanUseNominationCommands(int client)
 
 public Action Command_Nominate(int client, int args)
 {
+	// Only the registered command callback may read the engine argument stack.
+	char commandName[32], query[PLATFORM_MAX_PATH];
+	GetCmdArg(0, commandName, sizeof(commandName));
+	if (args > 0) GetCmdArg(1, query, sizeof(query));
 	int profile=KogasaPerfBegin();
-	Action result=NativeVotesProfiled_Command_Nominate(client, args);
+	Action result=Nominations_HandleRequest(client, commandName, query);
 	KogasaPerfEnd(profile,"Command_Nominate");
 	return result;
 }
 
-Action NativeVotesProfiled_Command_Nominate(int client, int args)
+Action Nominations_HandleRequest(int client, const char[] commandName, const char[] query)
 {
 	if (!client)
 	{
@@ -622,10 +621,7 @@ Action NativeVotesProfiled_Command_Nominate(int client, int args)
 	}
 
 	ReplySource source = GetCmdReplySource();
-	char commandName[32];
-	GetCmdArg(0, commandName, sizeof(commandName));
-	
-	if (args == 0)
+	if (!query[0])
 	{
 		if (StrEqual(commandName, "sm_nr", false))
 		{
@@ -638,7 +634,7 @@ Action NativeVotesProfiled_Command_Nominate(int client, int args)
 	}
 
 	char mapname[PLATFORM_MAX_PATH];
-	GetCmdArg(1, mapname, sizeof(mapname));
+	strcopy(mapname, sizeof(mapname), query);
 	if (StrEqual(mapname, "random", false))
 	{
 		QueueRandomNomination(client);
