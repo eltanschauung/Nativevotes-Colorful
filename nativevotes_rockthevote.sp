@@ -68,7 +68,7 @@ public Plugin myinfo =
 	name = "NativeVotes | Rock The Vote",
 	author = "AlliedModders LLC and Powerlord",
 	description = "Provides RTV Map Voting",
-	version = "26w06b",
+	version = "26w40a",
 	url = "https://github.com/Heapons/sourcemod-nativevotes-updated/"
 };
 
@@ -87,7 +87,7 @@ enum
 	needed,
 	minplayers,
 	initialdelay,
-	interval,
+	rtv_interval,
 	changetime,
 	postvoteaction,
 	connectdelay,
@@ -137,7 +137,7 @@ public void OnPluginStart()
 	g_ConVars[needed] 		  = CreateConVar("sm_rtv_needed", "0.60", "Percentage of players needed to rockthevote (Def 60%)", 0, true, 0.05, true, 1.0);
 	g_ConVars[minplayers]     = CreateConVar("sm_rtv_minplayers", "0", "Number of players required before RTV will be enabled.", 0, true, 0.0, true, float(MAXPLAYERS));
 	g_ConVars[initialdelay]   = CreateConVar("sm_rtv_initialdelay", "30.0", "Time (in seconds) before first RTV can be held", 0, true, 0.00);
-	g_ConVars[interval] 	  = CreateConVar("sm_rtv_interval", "240.0", "Time (in seconds) after a failed RTV before another can be held", 0, true, 0.00);
+	g_ConVars[rtv_interval] 	  = CreateConVar("sm_rtv_interval", "240.0", "Time (in seconds) after a failed RTV before another can be held", 0, true, 0.00);
 	g_ConVars[changetime] 	  = CreateConVar("sm_rtv_changetime", "0", "When to change the map after a succesful RTV: 0 - Instant, 1 - RoundEnd, 2 - MapEnd", _, true, 0.0, true, 2.0);
 	g_ConVars[postvoteaction] = CreateConVar("sm_rtv_postvoteaction", "0", "What to do with RTV's after a mapvote has completed. 0 - Allow, success = instant change, 1 - Deny", _, true, 0.0, true, 1.0);
 	g_ConVars[connectdelay] = CreateConVar("sm_rtv_connect_delay", "60", "Seconds a client must be connected before they can use RTV. 0 disables the gate.", _, true, 0.0, true, 3600.0);
@@ -1076,9 +1076,9 @@ void StartRTV()
 		ResetRTV();
 		
 		g_RTVAllowed = false;
-		g_RTVTime = GetTime() + g_ConVars[interval].IntValue;
+		g_RTVTime = GetTime() + g_ConVars[rtv_interval].IntValue;
 
-		CreateTimer(g_ConVars[interval].FloatValue, Timer_DelayRTV, _, TIMER_FLAG_NO_MAPCHANGE);
+		CreateTimer(g_ConVars[rtv_interval].FloatValue, Timer_DelayRTV, _, TIMER_FLAG_NO_MAPCHANGE);
 	}
 }
 

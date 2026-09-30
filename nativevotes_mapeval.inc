@@ -27,7 +27,9 @@ int ParseMapEvalVoteWeight(const char[] value)
 		return MAP_EVAL_DEFAULT_VOTE_WEIGHT;
 	}
 
-	int weight = StringToInt(trimmed);
+	int weight;
+	if (StringToIntEx(trimmed, weight) != strlen(trimmed)) return MAP_EVAL_DEFAULT_VOTE_WEIGHT;
+	if (weight == -1) return -1;
 	if (weight < MAP_EVAL_DEFAULT_VOTE_WEIGHT)
 	{
 		return MAP_EVAL_DEFAULT_VOTE_WEIGHT;
@@ -57,6 +59,7 @@ int GetMapEvalVoteWeight(const char[] map)
 	{
 		return MAP_EVAL_DEFAULT_VOTE_WEIGHT;
 	}
+	if (weight == -1) return -1;
 
 	if (weight < MAP_EVAL_DEFAULT_VOTE_WEIGHT)
 	{
@@ -72,6 +75,7 @@ int GetMapEvalVoteWeight(const char[] map)
 
 void ClearMapEvalConfig()
 {
+	MapVote_ClearWeightCache();
 	if (g_MapEvalVoteWeights != null)
 	{
 		g_MapEvalVoteWeights.Clear();

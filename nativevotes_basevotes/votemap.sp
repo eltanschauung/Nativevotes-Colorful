@@ -1,15 +1,13 @@
 #define MAPS_COUNT 5
 
 Menu g_MapList;
-int g_mapCount;
-ArrayList g_SelectedMaps;
 int g_MapListSerial = -1;
 
 int LoadMapList(Menu menu)
 {
 	menu.RemoveAllItems();
 
-	ArrayList maps = new ArrayList(PLATFORM_MAX_PATH);
+	ArrayList maps = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
 	Handle result = ReadMapList(maps, g_MapListSerial, "sm_votemap menu");
 	if (result == INVALID_HANDLE)
 	{

@@ -43,6 +43,7 @@
 #define REQUIRE_PLUGIN
 
 #include "nativevotes_statistics.inc"
+#include "nativevotes_performance.inc"
 
 native int Filters_GetChatName(int client, char[] buffer, int maxlen);
 native void NativeVotes_GetRTVProgress(int &votes, int &needed);
@@ -55,9 +56,14 @@ public Plugin myinfo =
 	name = "NativeVotes | Map Nominations",
 	author = "AlliedModders LLC and Powerlord",
 	description = "Provides Map Nominations",
-	version = "26w06b",
+	version = "26w40a",
 	url = "https://github.com/Heapons/sourcemod-nativevotes-updated/"
 };
+
+public Action Listener_Nominate(int client, const char[] command, int argc)
+{
+	return Command_Nominate(client, argc);
+}
 
 public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max)
 {
@@ -136,6 +142,7 @@ public void OnPluginStart()
 	g_ConVars[nextlevel_allowed] = FindConVar("sv_vote_issue_nextlevel_allowed");
 
 	RegConsoleCmd("sm_nominate", Command_Nominate);
+	AddCommandListener(Listener_Nominate, "nominate");
 	RegConsoleCmd("sm_n", Command_Nominate);
 	RegConsoleCmd("sm_nom", Command_Nominate);
 	RegConsoleCmd("sm_nr", Command_Nominate);
@@ -586,6 +593,14 @@ bool CanUseNominationCommands(int client)
 }
 
 public Action Command_Nominate(int client, int args)
+{
+	int profile=KogasaPerfBegin();
+	Action result=NativeVotesProfiled_Command_Nominate(client, args);
+	KogasaPerfEnd(profile,"Command_Nominate");
+	return result;
+}
+
+Action NativeVotesProfiled_Command_Nominate(int client, int args)
 {
 	if (!client)
 	{

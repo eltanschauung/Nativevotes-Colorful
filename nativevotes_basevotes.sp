@@ -48,7 +48,7 @@ public Plugin:myinfo =
 	name = "NativeVotes | Basic Votes",
 	author = "Powerlord and AlliedModders LLC",
 	description = "NativeVotes Basic Vote Commands",
-	version = "26w06b",
+	version = "26w40a",
 	url = "https://github.com/Heapons/sourcemod-nativevotes-updated/"
 };
 
@@ -125,7 +125,6 @@ public void OnPluginStart()
 	g_ConVars[kick] = CreateConVar("sm_vote_kick", "0.60", "percent required for successful kick vote.", 0, true, 0.05, true, 1.0);
 	g_ConVars[ban] = CreateConVar("sm_vote_ban", "0.60", "percent required for successful ban vote.", 0, true, 0.05, true, 1.0);
 
-	g_SelectedMaps = CreateArray(PLATFORM_MAX_PATH);
     
 	g_MapList = CreateMenu(MenuHandler_Map, MenuAction_DrawItem|MenuAction_Display);
 	SetMenuTitle(g_MapList, "%T", "Please select a map", LANG_SERVER);
@@ -192,7 +191,7 @@ public void OnLibraryRemoved(const char[] name)
 
 public void OnConfigsExecuted()
 {
-	g_mapCount = LoadMapList(g_MapList);
+	LoadMapList(g_MapList);
 }
 
 public void OnAdminMenuReady(Handle topmenu)
@@ -717,15 +716,6 @@ int Internal_CheckVoteDelay()
 		return NativeVotes_CheckVoteDelay();
 	}
 	return CheckVoteDelay();
-}
-
-bool Internal_IsNewVoteAllowed()
-{
-	if (g_NativeVotes)
-	{
-		return NativeVotes_IsNewVoteAllowed();
-	}
-	return IsNewVoteAllowed();
 }
 
 void GetPlayerName(int client, char[] name, int maxlen)
