@@ -107,6 +107,7 @@ int g_Clients;
 int g_TotalClients;
 int g_Items;
 ArrayList g_hVotes;
+ArrayList g_hDisplayVotes;
 NativeVote g_hCurVote;
 int g_curDisplayClient = 0;
 char g_newMenuTitle[TRANSLATION_LENGTH];
@@ -308,6 +309,7 @@ public void OnPluginStart()
 	}
 	
 	g_hVotes = new ArrayList(1, Game_GetMaxItems());
+	g_hDisplayVotes = new ArrayList(1, Game_GetMaxItems());
 	
 	AutoExecConfig(true, "nativevotes");
 }
@@ -405,11 +407,11 @@ public void OnClientDisconnect_Post(int client)
 		{
 			g_hVotes.Set(item, g_hVotes.Get(item) - 1);
 			g_NumVotes--;
-			Game_UpdateVoteCounts(g_hVotes, g_TotalClients);
 		}
 		
 		g_ClientVotes[client] = VOTE_NOT_VOTING;
 		g_ClientVoteCounted[client] = false;
+		UpdateVoteCounts();
 	}
 	
 	CancelClientVote(g_hCurVote, client, MenuCancel_Disconnected);
@@ -755,7 +757,7 @@ void OnVoteSelect(NativeVote vote, int client, int item)
 			{
 				g_hVotes.Set(item, g_hVotes.Get(item) + 1);
 				g_NumVotes++;
-				Game_UpdateVoteCounts(g_hVotes, g_TotalClients);
+				UpdateVoteCounts();
 			}
 			else
 			{
@@ -1081,7 +1083,7 @@ void DrawHintProgress()
 void BuildVoteLeaders()
 {
 	g_LeaderList[0] = '\0';
-	if (g_NumVotes == 0 || !g_ConVars[progress_hintbox].BoolValue)
+	if (!g_ConVars[progress_hintbox].BoolValue)
 	{
 		return;
 	}
@@ -1119,6 +1121,23 @@ void BuildVoteLeaders()
 		Format(g_LeaderList, sizeof(g_LeaderList), "%s\n%i. %s: (%i)", g_LeaderList, i+1, choice, votes[i][VOTEINFO_ITEM_VOTES]);
 	}
 	
+}
+
+// Keep actual ballots separate from the panel counts. Starting votes and
+// privileged vote weights must be visible from vote start, including zero-ballot
+// options, without changing who has voted or the vote's client/quorum tracking.
+void UpdateVoteCounts()
+{
+	int[] counts = new int[g_hVotes.Length];
+	for (int item = 0; item < g_Items; item++) counts[item] = g_hVotes.Get(item);
+	int total = g_NumVotes;
+	if (g_hCurVote == null || !BuildWeightedVoteProgress(counts, g_Items, total))
+	{
+		Game_UpdateVoteCounts(g_hVotes, g_TotalClients);
+		return;
+	}
+	for (int item = 0; item < g_hDisplayVotes.Length; item++) g_hDisplayVotes.Set(item, counts[item]);
+	Game_UpdateVoteCounts(g_hDisplayVotes, g_TotalClients);
 }
 
 bool BuildWeightedVoteProgress(int[] itemVotes, int itemCount, int &weightedVoteTotal)
@@ -1268,7 +1287,7 @@ void RefreshMapVoteTotalClients(bool forceUpdate = false)
 
 	g_TotalClients = totalClients;
 	Game_UpdateClientCount(g_TotalClients);
-	Game_UpdateVoteCounts(g_hVotes, g_TotalClients);
+	UpdateVoteCounts();
 }
 
 
@@ -1547,7 +1566,7 @@ bool StartVote(NativeVote vote, int num_clients, int[] clients, int max_time, in
 	g_TotalClients = clientCount;
 	RefreshMapVoteTotalClients(true);
 	
-	Game_UpdateVoteCounts(g_hVotes, g_TotalClients);
+	UpdateVoteCounts();
 	
 	DoClientVote(vote, clients, num_clients);	
 	
@@ -1814,10 +1833,10 @@ bool Internal_RedrawToClient(int client, bool revotes)
 		{
 			SetArrayCell(g_hVotes, g_ClientVotes[client], GetArrayCell(g_hVotes, g_ClientVotes[client]) - 1);
 			g_NumVotes--;
-			Game_UpdateVoteCounts(g_hVotes, g_TotalClients);
 		}
 		g_ClientVotes[client] = VOTE_PENDING;
 		g_ClientVoteCounted[client] = false;
+		UpdateVoteCounts();
 		g_bRevoting[client] = true;
 		RefreshMapVoteTotalClients(false);
 	}

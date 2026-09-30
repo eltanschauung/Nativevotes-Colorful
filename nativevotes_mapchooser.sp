@@ -834,6 +834,8 @@ void InitiateVote(MapChange when, ArrayList inputlist=null)
 		return;
 	}
 	
+	// Apply current file edits before constructing the vote and its weight cache.
+	LoadMapEvalConfig();
 	g_ChangeTime = when;
 	
 	g_WaitingForVote = false;
@@ -1281,6 +1283,21 @@ int BuildWeightedMenuVoteResults(Menu menu, int clients, const int[][] clientInf
     return BuildWeightedMapVoteResults(view_as<Handle>(menu), false, clients, clientInfo, rawItems, itemInfo, result);
 }
 
+// Both menu APIs report VoteCancel_NoVotes before their result callback when
+// nobody casts a real ballot. Starting votes still count in that path.
+bool MapVote_FinishStartingVotes(Handle menu, bool nativeVote)
+{
+	int count = nativeVote ? view_as<NativeVote>(menu).ItemCount : view_as<Menu>(menu).ItemCount;
+	if (count <= 0) return false;
+	int[][] results = new int[count][2];
+	int empty[1][2];
+	int total = BuildWeightedMapVoteResults(menu, nativeVote, 0, empty, 0, empty, results);
+	if (total <= 0) return false;
+	if (nativeVote) FinishWeightedNativeVote(view_as<NativeVote>(menu), total, 0, empty, count, results);
+	else FinishWeightedMenuVote(view_as<Menu>(menu), total, 0, empty, count, results);
+	return true;
+}
+
 void FinishWeightedNativeVote(NativeVote menu, int weighted_votes, int num_clients, const int[][] client_info, int num_items, const int[][] item_info)
 {
 	char map[PLATFORM_MAX_PATH];
@@ -1604,7 +1621,12 @@ public int Handler_MapVoteMenu(Menu menu, MenuAction action, int param1, int par
 	
 		case MenuAction_VoteCancel:
 		{
-			// If we receive 0 votes, pick at random.
+			if (param1 == VoteCancel_NoVotes && MapVote_FinishStartingVotes(view_as<Handle>(menu), false))
+			{
+				g_HasVoteStarted = false;
+				return 0;
+			}
+			// With no starting votes either, retain the configured no-vote fallback.
 			if (param1 == VoteCancel_NoVotes && g_ConVars[mapvote_novote].BoolValue)
 			{
 				int count = menu.ItemCount;
@@ -1649,7 +1671,7 @@ public int Handler_NV_MapVoteMenu(NativeVote menu, MenuAction action, int param1
 	{
 		case MenuAction_End:
 		{
-			g_VoteMenu = null;
+			if (g_VoteNative == menu) g_VoteNative = null;
 			menu.Close();
 		}
 		
@@ -1674,7 +1696,12 @@ public int Handler_NV_MapVoteMenu(NativeVote menu, MenuAction action, int param1
 	
 		case MenuAction_VoteCancel:
 		{
-			// If we receive 0 votes, pick at random.
+			if (param1 == VoteCancel_NoVotes && MapVote_FinishStartingVotes(view_as<Handle>(menu), true))
+			{
+				g_HasVoteStarted = false;
+				return 0;
+			}
+			// With no starting votes either, retain the configured no-vote fallback.
 			if (param1 == VoteCancel_NoVotes && g_ConVars[mapvote_novote].BoolValue)
 			{
 				int count = menu.ItemCount;

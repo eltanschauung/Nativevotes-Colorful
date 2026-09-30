@@ -647,6 +647,10 @@ bool Game_DisplayVote(NativeVote vote, int[] clients, int num_clients)
 		case Engine_CSGO, Engine_TF2:
 		{
 			TF2CSGO_DisplayVote(vote, clients, num_clients);
+			// Opening/redrawing the native panel resets its option counters.
+			// Restore weighted counts afterwards, including initial seed votes.
+			Game_UpdateClientCount(g_TotalClients);
+			UpdateVoteCounts();
 		}
 	}
 
