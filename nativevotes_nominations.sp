@@ -930,7 +930,7 @@ void AttemptNominate(int client, const char[] map, int size, bool isVoteMenu)
 	else
 	{
 		NativeVoteStats_LogEvent("nomination", mapname, client, -1, 0, 0, 0, "replaced");
-		CReplyToCommandEx(client, client, "[{lightgreen}Nominations\x01] %t", "Map Nominated", name, displayName);
+		CPrintToChatAllEx(client, "[{lightgreen}Nominations\x01] %s changed their nomination to %s.", name, displayName);
 	}
 
 	RecordSlowNominationOperation("attempt_nomination", startedAt, g_NominatedStatusMaps.Length);
