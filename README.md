@@ -18,3 +18,15 @@ unimplemented and NativeVotes will continue displaying raw counts.
 Credit to Powerlord and all related parties: https://github.com/Heapons/sourcemod-nativevotes-updated/
 
 See [kogasa.tf](https://kogasa.tf)
+
+## Map catalog and nomination categories
+
+`configs/mapeval.cfg` is the shared primary source for nominations, random votes,
+and empty-server map changes. `mapcycle.txt` remains the missing/invalid-file
+fallback. `!nominate` starts with Popular and Random 50, then paginated gamemode
+categories; `!nr` uses the same Random 50 browser. `sm_refresh_mapcycle` refreshes
+the entire shared catalog without live popularity queries.
+
+Unrated/level-0 maps can be nominated; levels 1–3 additionally allow automatic
+random/empty-server selection. Level 2 adds one starting vote and level 3 adds
+two. See [catalog migration, generation, and tests](tests/catalog.md).

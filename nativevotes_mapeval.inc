@@ -1,504 +1,327 @@
 #if defined _nativevotes_mapeval_included
-	#endinput
+    #endinput
 #endif
 #define _nativevotes_mapeval_included
 
 #define MAP_EVAL_CONFIG_FILE "configs/mapeval.cfg"
 #define MAP_EVAL_DEFAULT_VOTE_WEIGHT 1
 #define MAP_EVAL_MAX_VOTE_WEIGHT 3
+#define MAP_EVAL_POPULAR "popular maps"
 
-StringMap g_MapEvalGamemodes;
-StringMap g_MapEvalVoteWeights;
+ArrayList g_CatalogMaps, g_CatalogCategories, g_CatalogPopular;
+StringMap g_CatalogGroups, g_MapEvalVoteWeights;
+GlobalForward g_CatalogReloaded;
+bool g_CatalogPrimary, g_CatalogLoaded, g_CatalogAttempted;
 
 void MapEval_Init()
 {
-	g_MapEvalGamemodes = new StringMap();
-	g_MapEvalVoteWeights = new StringMap();
+    g_CatalogMaps = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
+    g_CatalogCategories = new ArrayList(ByteCountToCells(64));
+    g_CatalogPopular = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
+    g_CatalogGroups = new StringMap();
+    g_MapEvalVoteWeights = new StringMap();
+    g_CatalogReloaded = new GlobalForward("NativeVotes_OnMapCatalogReloaded", ET_Ignore);
+}
+
+void MapEval_RegisterNatives()
+{
+    CreateNative("NativeVotes_ReloadMapCatalog", Catalog_NativeReload);
+    CreateNative("NativeVotes_CopyMapCatalog", Catalog_NativeCopyMaps);
+    CreateNative("NativeVotes_CopyMapCategories", Catalog_NativeCopyCategories);
+    CreateNative("NativeVotes_GetMapCatalogSource", Catalog_NativeSource);
+}
+
+void Catalog_Clear()
+{
+    char category[64];
+    for (int i = 0; i < g_CatalogCategories.Length; i++)
+    {
+        g_CatalogCategories.GetString(i, category, sizeof(category));
+        int value;
+        if (g_CatalogGroups.GetValue(category, value))
+        {
+            ArrayList maps = view_as<ArrayList>(value);
+            delete maps;
+        }
+    }
+    g_CatalogMaps.Clear();
+    g_CatalogCategories.Clear();
+    g_CatalogPopular.Clear();
+    g_CatalogGroups.Clear();
+    g_MapEvalVoteWeights.Clear();
 }
 
 int ParseMapEvalVoteWeight(const char[] value)
 {
-	char trimmed[32];
-	strcopy(trimmed, sizeof(trimmed), value);
-	TrimString(trimmed);
+    char trimmed[32];
+    strcopy(trimmed, sizeof(trimmed), value);
+    TrimString(trimmed);
+    int level;
+    if (!trimmed[0] || StringToIntEx(trimmed, level) != strlen(trimmed) || level < 0)
+        return 0;
+    return level > 3 ? 3 : level;
+}
 
-	if (!trimmed[0])
-	{
-		return MAP_EVAL_DEFAULT_VOTE_WEIGHT;
-	}
-
-	int weight;
-	if (StringToIntEx(trimmed, weight) != strlen(trimmed)) return MAP_EVAL_DEFAULT_VOTE_WEIGHT;
-	if (weight == -1) return -1;
-	if (weight < MAP_EVAL_DEFAULT_VOTE_WEIGHT)
-	{
-		return MAP_EVAL_DEFAULT_VOTE_WEIGHT;
-	}
-	if (weight > MAP_EVAL_MAX_VOTE_WEIGHT)
-	{
-		return MAP_EVAL_MAX_VOTE_WEIGHT;
-	}
-
-	return weight;
+int GetMapEvalLevel(const char[] map)
+{
+    int level;
+    g_MapEvalVoteWeights.GetValue(map, level);
+    return level;
 }
 
 int GetMapEvalVoteWeight(const char[] map)
 {
-	if (!map[0] || StrEqual(map, VOTE_EXTEND, false) || StrEqual(map, VOTE_DONTCHANGE, false))
-	{
-		return MAP_EVAL_DEFAULT_VOTE_WEIGHT;
-	}
-
-	if (g_MapEvalVoteWeights == null)
-	{
-		return MAP_EVAL_DEFAULT_VOTE_WEIGHT;
-	}
-
-	int weight;
-	if (!g_MapEvalVoteWeights.GetValue(map, weight))
-	{
-		return MAP_EVAL_DEFAULT_VOTE_WEIGHT;
-	}
-	if (weight == -1) return -1;
-
-	if (weight < MAP_EVAL_DEFAULT_VOTE_WEIGHT)
-	{
-		return MAP_EVAL_DEFAULT_VOTE_WEIGHT;
-	}
-	if (weight > MAP_EVAL_MAX_VOTE_WEIGHT)
-	{
-		return MAP_EVAL_MAX_VOTE_WEIGHT;
-	}
-
-	return weight;
+    // Vote callers expect baseline 1, whereas catalog levels have baseline 0.
+    int level = GetMapEvalLevel(map);
+    return level > 1 ? level : 1;
 }
 
-void ClearMapEvalConfig()
+bool Catalog_AddMap(const char[] map, ArrayList category, const char[] rawLevel)
 {
-	MapVote_ClearWeightCache();
-	if (g_MapEvalVoteWeights != null)
-	{
-		g_MapEvalVoteWeights.Clear();
-	}
-
-	if (g_MapEvalGamemodes == null)
-	{
-		return;
-	}
-
-	StringMapSnapshot snapshot = g_MapEvalGamemodes.Snapshot();
-	char gamemode[64];
-
-	for (int i = 0; i < snapshot.Length; i++)
-	{
-		snapshot.GetKey(i, gamemode, sizeof(gamemode));
-
-		int mapsValue;
-		if (!g_MapEvalGamemodes.GetValue(gamemode, mapsValue))
-		{
-			continue;
-		}
-
-		ArrayList maps = view_as<ArrayList>(mapsValue);
-		if (maps != null)
-		{
-			delete maps;
-		}
-	}
-
-	delete snapshot;
-	g_MapEvalGamemodes.Clear();
+    char resolved[PLATFORM_MAX_PATH];
+    if (!map[0] || FindMap(map, resolved, sizeof(resolved)) == FindMap_NotFound)
+        return true; // Preserve uninstalled config entries on disk, not in menus.
+    int previous;
+    if (g_MapEvalVoteWeights.GetValue(resolved, previous))
+        return true; // Resolve map/workshop aliases to one entry; first rating wins.
+    g_MapEvalVoteWeights.SetValue(resolved, ParseMapEvalVoteWeight(rawLevel));
+    g_CatalogMaps.PushString(resolved);
+    category.PushString(resolved);
+    return true;
 }
 
-void LoadMapEvalConfig()
+bool Catalog_LoadPrimary()
 {
-	if (g_MapEvalGamemodes == null)
-	{
-		g_MapEvalGamemodes = new StringMap();
-	}
-	if (g_MapEvalVoteWeights == null)
-	{
-		g_MapEvalVoteWeights = new StringMap();
-	}
+    char path[PLATFORM_MAX_PATH];
+    BuildPath(Path_SM, path, sizeof(path), MAP_EVAL_CONFIG_FILE);
+    if (!FileExists(path))
+        return false;
+    KeyValues kv = new KeyValues("mapEval");
+    if (!kv.ImportFromFile(path))
+    {
+        delete kv;
+        return false;
+    }
+    char rootName[64];
+    kv.GetSectionName(rootName, sizeof(rootName));
+    if (!StrEqual(rootName, "mapEval", false) || !kv.GotoFirstSubKey())
+    {
+        delete kv;
+        return false;
+    }
+    bool valid = true;
+    do
+    {
+        char category[64];
+        kv.GetSectionName(category, sizeof(category));
+        if (StrEqual(category, MAP_EVAL_POPULAR, false))
+        {
+            if (kv.GotoFirstSubKey(false))
+            {
+                do
+                {
+                    char map[PLATFORM_MAX_PATH], resolved[PLATFORM_MAX_PATH];
+                    kv.GetSectionName(map, sizeof(map));
+                    if (FindMap(map, resolved, sizeof(resolved)) != FindMap_NotFound
+                        && g_CatalogPopular.FindString(resolved) == -1)
+                        g_CatalogPopular.PushString(resolved);
+                } while (kv.GotoNextKey(false));
+                kv.GoBack();
+            }
+            continue;
+        }
+        int duplicate;
+        if (!category[0] || g_CatalogGroups.GetValue(category, duplicate))
+        {
+            valid = false;
+            break;
+        }
+        ArrayList maps = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
+        g_CatalogGroups.SetValue(category, view_as<int>(maps));
+        g_CatalogCategories.PushString(category);
+        if (kv.GotoFirstSubKey(false))
+        {
+            do
+            {
+                char map[PLATFORM_MAX_PATH], rawLevel[32];
+                kv.GetSectionName(map, sizeof(map));
+                if (kv.GotoFirstSubKey(false))
+                {
+                    kv.GoBack();
+                    valid = false;
+                    break;
+                }
+                kv.GetString(NULL_STRING, rawLevel, sizeof(rawLevel), "");
+                if (!Catalog_AddMap(map, maps, rawLevel))
+                {
+                    valid = false;
+                    break;
+                }
+            } while (kv.GotoNextKey(false));
+            kv.GoBack();
+        }
+        if (!valid) break;
+    } while (kv.GotoNextKey());
+    delete kv;
+    // Popular is an ordered view of the same catalog, never a second map source.
+    char map[PLATFORM_MAX_PATH];
+    for (int i = g_CatalogPopular.Length - 1; i >= 0; i--)
+    {
+        g_CatalogPopular.GetString(i, map, sizeof(map));
+        int level;
+        if (!g_MapEvalVoteWeights.GetValue(map, level))
+            g_CatalogPopular.Erase(i);
+    }
+    return valid && g_CatalogMaps.Length > 0;
+}
 
-	ClearMapEvalConfig();
+bool Catalog_LoadFallback()
+{
+    ConVar cycle = FindConVar("mapcyclefile");
+    char path[PLATFORM_MAX_PATH];
+    if (cycle == null) return false;
+    cycle.GetString(path, sizeof(path));
+    if (StrContains(path, "cfg/") != 0)
+        Format(path, sizeof(path), "cfg/%s", path);
+    File file = OpenFile(path, "r");
+    if (file == null) return false;
+    ArrayList maps = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
+    g_CatalogCategories.PushString("mapcycle");
+    g_CatalogGroups.SetValue("mapcycle", view_as<int>(maps));
+    char map[PLATFORM_MAX_PATH];
+    while (file.ReadLine(map, sizeof(map)))
+    {
+        int comment = StrContains(map, "//");
+        if (comment >= 0) map[comment] = '\0';
+        TrimString(map);
+        if (!map[0]) continue;
+        // Fallback has no ratings: all valid cycle entries retain legacy random
+        // eligibility. Duplicate mapcycle lines are harmless and ignored.
+        Catalog_AddMap(map, maps, "1");
+    }
+    delete file;
+    return g_CatalogMaps.Length > 0;
+}
 
-	char path[PLATFORM_MAX_PATH];
-	BuildPath(Path_SM, path, sizeof(path), MAP_EVAL_CONFIG_FILE);
+bool LoadMapEvalConfig()
+{
+    g_CatalogAttempted = true;
+    Catalog_Clear();
+    g_CatalogPrimary = Catalog_LoadPrimary();
+    bool ok = g_CatalogPrimary;
+    if (!ok)
+    {
+        Catalog_Clear();
+        ok = Catalog_LoadFallback();
+        LogMessage("[MapCatalog] mapeval.cfg missing/invalid/empty; mapcycle fallback: %d maps", g_CatalogMaps.Length);
+    }
+    g_CatalogLoaded = ok;
+    g_MapList.Clear();
+    char map[PLATFORM_MAX_PATH];
+    for (int i = 0; i < g_CatalogMaps.Length; i++)
+    {
+        g_CatalogMaps.GetString(i, map, sizeof(map));
+        g_MapList.PushString(map);
+    }
+    // Do not clear the starting-vote cache of a vote already in progress.
+    Call_StartForward(g_CatalogReloaded);
+    Call_Finish();
+    return ok;
+}
 
-	if (!FileExists(path))
-	{
-		LogMessage("[NativeVotes MapChooser] mapeval config missing, falling back to map list: %s", path);
-		return;
-	}
-
-	KeyValues kv = new KeyValues("mapEval");
-	if (!kv.ImportFromFile(path))
-	{
-		LogError("[NativeVotes MapChooser] Failed to parse mapeval config: %s", path);
-		delete kv;
-		return;
-	}
-
-	if (!kv.GotoFirstSubKey())
-	{
-		delete kv;
-		return;
-	}
-
-	do
-	{
-		char gamemode[64];
-		kv.GetSectionName(gamemode, sizeof(gamemode));
-		if (!gamemode[0])
-		{
-			continue;
-		}
-
-		ArrayList maps = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
-
-		if (kv.GotoFirstSubKey(false))
-		{
-			do
-			{
-				char mapName[PLATFORM_MAX_PATH];
-				kv.GetSectionName(mapName, sizeof(mapName));
-				if (!mapName[0])
-				{
-					continue;
-				}
-
-				// mapeval.cfg now stores maps directly under each gamemode.
-				// Legacy tier1/tier2 sections are intentionally ignored.
-				if (kv.GotoFirstSubKey(false))
-				{
-					kv.GoBack();
-					continue;
-				}
-
-				char weightValue[32];
-				kv.GetString(NULL_STRING, weightValue, sizeof(weightValue), "");
-				int voteWeight = ParseMapEvalVoteWeight(weightValue);
-
-				maps.PushString(mapName);
-				g_MapEvalVoteWeights.SetValue(mapName, voteWeight);
-			}
-			while (kv.GotoNextKey(false));
-
-			kv.GoBack();
-		}
-
-		if (maps.Length > 0)
-		{
-			g_MapEvalGamemodes.SetValue(gamemode, view_as<int>(maps));
-		}
-		else
-		{
-			delete maps;
-		}
-	}
-	while (kv.GotoNextKey());
-
-	delete kv;
+void Catalog_BuildRandomPool(ArrayList pool)
+{
+    pool.Clear();
+    UpdateCurrentMap();
+    char map[PLATFORM_MAX_PATH];
+    for (int i = 0; i < g_CatalogMaps.Length; i++)
+    {
+        g_CatalogMaps.GetString(i, map, sizeof(map));
+        if (GetMapEvalLevel(map) >= 1 && !StrEqual(map, g_CurrentMap, false)
+            && !RecentMapHistory_Contains(map) && IsMapValid(map))
+            pool.PushString(map);
+    }
 }
 
 bool CopyRandomMapEvalMap(char[] buffer, int maxlen)
 {
-	if (maxlen <= 0)
-	{
-		return false;
-	}
-
-	buffer[0] = '\0';
-
-	if (g_MapEvalGamemodes == null || g_MapEvalGamemodes.Size == 0)
-	{
-		return false;
-	}
-
-	UpdateCurrentMap();
-
-	ArrayList pool = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
-	StringMap seen = new StringMap();
-	StringMapSnapshot snapshot = g_MapEvalGamemodes.Snapshot();
-
-	char gamemode[64];
-	char mapName[PLATFORM_MAX_PATH];
-	for (int i = 0; i < snapshot.Length; i++)
-	{
-		snapshot.GetKey(i, gamemode, sizeof(gamemode));
-
-		int mapsValue;
-		if (!g_MapEvalGamemodes.GetValue(gamemode, mapsValue))
-		{
-			continue;
-		}
-
-		ArrayList maps = view_as<ArrayList>(mapsValue);
-		if (maps == null)
-		{
-			continue;
-		}
-
-		for (int mapIndex = 0; mapIndex < maps.Length; mapIndex++)
-		{
-			maps.GetString(mapIndex, mapName, sizeof(mapName));
-			TrimString(mapName);
-
-			if (!mapName[0]
-				|| (g_CurrentMap[0] && StrEqual(mapName, g_CurrentMap, false))
-				|| RecentMapHistory_Contains(mapName)
-				|| !IsMapValid(mapName))
-			{
-				continue;
-			}
-
-			int dummy;
-			if (seen.GetValue(mapName, dummy))
-			{
-				continue;
-			}
-
-			seen.SetValue(mapName, 1);
-			pool.PushString(mapName);
-		}
-	}
-
-	delete snapshot;
-	delete seen;
-
-	bool found = false;
-	if (pool.Length > 0)
-	{
-		pool.GetString(GetRandomInt(0, pool.Length - 1), buffer, maxlen);
-		found = true;
-	}
-
-	delete pool;
-	return found;
-}
-
-bool IsMapEvalExcludedByHistory(const char[] mapName)
-{
-	return RecentMapHistory_Contains(mapName);
-}
-
-void BuildMapEvalWeightPool(ArrayList maps, int requiredWeight, ArrayList pool, StringMap seen)
-{
-	if (maps == null || pool == null)
-	{
-		return;
-	}
-
-	char mapName[PLATFORM_MAX_PATH];
-	for (int i = 0; i < maps.Length; i++)
-	{
-		maps.GetString(i, mapName, sizeof(mapName));
-		TrimString(mapName);
-
-		if (!mapName[0])
-		{
-			continue;
-		}
-		int voteWeight = GetMapEvalVoteWeight(mapName);
-		if (voteWeight != requiredWeight)
-		{
-			continue;
-		}
-		if (g_CurrentMap[0] && StrEqual(mapName, g_CurrentMap, false))
-		{
-			continue;
-		}
-		if (IsMapEvalExcludedByHistory(mapName))
-		{
-			continue;
-		}
-		if (!IsMapValid(mapName))
-		{
-			continue;
-		}
-		if (seen != null)
-		{
-			int dummy;
-			if (seen.GetValue(mapName, dummy))
-			{
-				continue;
-			}
-			seen.SetValue(mapName, 1);
-		}
-
-		pool.PushString(mapName);
-	}
-}
-
-ArrayList FirstAvailableMapEvalPool(ArrayList first, ArrayList second, ArrayList third)
-{
-	if (first != null && first.Length > 0)
-	{
-		return first;
-	}
-	if (second != null && second.Length > 0)
-	{
-		return second;
-	}
-	if (third != null && third.Length > 0)
-	{
-		return third;
-	}
-	return null;
-}
-
-ArrayList SelectMapEvalWeightPool(ArrayList weight3Pool, ArrayList weight2Pool, ArrayList weight1Pool, bool preferHighWeight)
-{
-	if (preferHighWeight)
-	{
-		return FirstAvailableMapEvalPool(weight3Pool, weight2Pool, weight1Pool);
-	}
-	return FirstAvailableMapEvalPool(weight1Pool, weight2Pool, weight3Pool);
-}
-
-void AddMapEvalVoteGroup(const char[] gamemode, ArrayList groupNames, ArrayList weight3Pools, ArrayList weight2Pools, ArrayList weight1Pools, StringMap seen)
-{
-	if (!gamemode[0] || g_MapEvalGamemodes == null)
-	{
-		return;
-	}
-
-	int mapsValue;
-	if (!g_MapEvalGamemodes.GetValue(gamemode, mapsValue))
-	{
-		return;
-	}
-
-	ArrayList maps = view_as<ArrayList>(mapsValue);
-	if (maps == null)
-	{
-		return;
-	}
-
-	ArrayList weight3Pool = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
-	ArrayList weight2Pool = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
-	ArrayList weight1Pool = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
-
-	BuildMapEvalWeightPool(maps, MAP_EVAL_MAX_VOTE_WEIGHT, weight3Pool, seen);
-	BuildMapEvalWeightPool(maps, 2, weight2Pool, seen);
-	BuildMapEvalWeightPool(maps, MAP_EVAL_DEFAULT_VOTE_WEIGHT, weight1Pool, seen);
-
-	if (weight3Pool.Length == 0 && weight2Pool.Length == 0 && weight1Pool.Length == 0)
-	{
-		delete weight3Pool;
-		delete weight2Pool;
-		delete weight1Pool;
-		return;
-	}
-
-	groupNames.PushString(gamemode);
-	weight3Pools.Push(view_as<int>(weight3Pool));
-	weight2Pools.Push(view_as<int>(weight2Pool));
-	weight1Pools.Push(view_as<int>(weight1Pool));
+    if (maxlen <= 0) return false;
+    buffer[0] = '\0';
+    ArrayList pool = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
+    Catalog_BuildRandomPool(pool);
+    bool found = pool.Length > 0;
+    if (found) pool.GetString(GetRandomInt(0, pool.Length - 1), buffer, maxlen);
+    delete pool;
+    return found;
 }
 
 bool PopulateNextVoteFromMapEval()
 {
-	if (!g_ConVars[mapvote_mapeval_random].BoolValue)
-	{
-		return false;
-	}
+    ArrayList pool = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
+    Catalog_BuildRandomPool(pool);
+    char map[PLATFORM_MAX_PATH];
+    int limit = g_ConVars[mapvote_include].IntValue;
+    while (pool.Length > 0 && g_NextMapList.Length < limit)
+    {
+        int index = GetRandomInt(0, pool.Length - 1);
+        pool.GetString(index, map, sizeof(map));
+        g_NextMapList.PushString(map);
+        pool.Erase(index);
+    }
+    delete pool;
+    // A primary file with no eligible maps must NEVER fall back to level 0.
+    return g_CatalogLoaded;
+}
 
-	if (g_MapEvalGamemodes == null || g_MapEvalGamemodes.Size == 0)
-	{
-		return false;
-	}
+public int Catalog_NativeReload(Handle plugin, int params)
+{
+    bool loaded = LoadMapEvalConfig();
+    if (!g_HasVoteStarted && !g_WaitingForVote) CreateNextVote();
+    return loaded;
+}
 
-	UpdateCurrentMap();
-	UpdateGameModeFromMap();
+public int Catalog_NativeCopyMaps(Handle plugin, int params)
+{
+    if (!g_CatalogAttempted) LoadMapEvalConfig();
+    ArrayList target = view_as<ArrayList>(GetNativeCell(1));
+    char category[64];
+    GetNativeString(2, category, sizeof(category));
+    ArrayList source = g_CatalogMaps;
+    if (StrEqual(category, MAP_EVAL_POPULAR, false)) source = g_CatalogPopular;
+    else if (category[0])
+    {
+        int value;
+        if (!g_CatalogGroups.GetValue(category, value)) { target.Clear(); return 0; }
+        source = view_as<ArrayList>(value);
+    }
+    target.Clear();
+    char map[PLATFORM_MAX_PATH];
+    for (int i = 0; i < source.Length; i++)
+    {
+        source.GetString(i, map, sizeof(map));
+        target.PushString(map);
+    }
+    return target.Length;
+}
 
-	ArrayList groupNames = new ArrayList(ByteCountToCells(64));
-	ArrayList weight3Pools = new ArrayList();
-	ArrayList weight2Pools = new ArrayList();
-	ArrayList weight1Pools = new ArrayList();
-	StringMap seen = new StringMap();
+public int Catalog_NativeCopyCategories(Handle plugin, int params)
+{
+    if (!g_CatalogAttempted) LoadMapEvalConfig();
+    ArrayList target = view_as<ArrayList>(GetNativeCell(1));
+    target.Clear();
+    char category[64];
+    for (int i = 0; i < g_CatalogCategories.Length; i++)
+    {
+        g_CatalogCategories.GetString(i, category, sizeof(category));
+        int value;
+        if (g_CatalogGroups.GetValue(category, value) && view_as<ArrayList>(value).Length > 0)
+            target.PushString(category);
+    }
+    return target.Length;
+}
 
-	if (g_GameMode[0])
-	{
-		AddMapEvalVoteGroup(g_GameMode, groupNames, weight3Pools, weight2Pools, weight1Pools, seen);
-	}
-
-	StringMapSnapshot snapshot = g_MapEvalGamemodes.Snapshot();
-	char gamemode[64];
-	for (int i = 0; i < snapshot.Length; i++)
-	{
-		snapshot.GetKey(i, gamemode, sizeof(gamemode));
-		if (g_GameMode[0] && StrEqual(gamemode, g_GameMode, false))
-		{
-			continue;
-		}
-
-		AddMapEvalVoteGroup(gamemode, groupNames, weight3Pools, weight2Pools, weight1Pools, seen);
-	}
-	delete snapshot;
-	delete seen;
-
-	char mapName[PLATFORM_MAX_PATH];
-	int limit = g_ConVars[mapvote_include].IntValue;
-	while (groupNames.Length > 0 && g_NextMapList.Length < limit)
-	{
-		int groupIndex = GetRandomInt(0, groupNames.Length - 1);
-		ArrayList weight3Pool = view_as<ArrayList>(weight3Pools.Get(groupIndex));
-		ArrayList weight2Pool = view_as<ArrayList>(weight2Pools.Get(groupIndex));
-		ArrayList weight1Pool = view_as<ArrayList>(weight1Pools.Get(groupIndex));
-		bool preferHighWeight = (GetRandomInt(1, 100) <= 60);
-		ArrayList pool = SelectMapEvalWeightPool(weight3Pool, weight2Pool, weight1Pool, preferHighWeight);
-
-		if (pool != null && pool.Length > 0)
-		{
-			int mapIndex = GetRandomInt(0, pool.Length - 1);
-			pool.GetString(mapIndex, mapName, sizeof(mapName));
-			g_NextMapList.PushString(mapName);
-		}
-
-		if (weight3Pool != null)
-		{
-			delete weight3Pool;
-		}
-		if (weight2Pool != null)
-		{
-			delete weight2Pool;
-		}
-		if (weight1Pool != null)
-		{
-			delete weight1Pool;
-		}
-
-		groupNames.Erase(groupIndex);
-		weight3Pools.Erase(groupIndex);
-		weight2Pools.Erase(groupIndex);
-		weight1Pools.Erase(groupIndex);
-	}
-
-	for (int i = 0; i < weight3Pools.Length; i++)
-	{
-		ArrayList weight3Pool = view_as<ArrayList>(weight3Pools.Get(i));
-		ArrayList weight2Pool = view_as<ArrayList>(weight2Pools.Get(i));
-		ArrayList weight1Pool = view_as<ArrayList>(weight1Pools.Get(i));
-		if (weight3Pool != null)
-		{
-			delete weight3Pool;
-		}
-		if (weight2Pool != null)
-		{
-			delete weight2Pool;
-		}
-		if (weight1Pool != null)
-		{
-			delete weight1Pool;
-		}
-	}
-
-	delete groupNames;
-	delete weight3Pools;
-	delete weight2Pools;
-	delete weight1Pools;
-
-	return (g_NextMapList.Length > 0);
+public int Catalog_NativeSource(Handle plugin, int params)
+{
+    SetNativeString(1, g_CatalogPrimary ? "mapeval.cfg" : "mapcycle.txt (fallback)", GetNativeCell(2));
+    return 0;
 }

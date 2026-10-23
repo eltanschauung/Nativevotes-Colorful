@@ -64,7 +64,7 @@ public Plugin myinfo =
 	name = "NativeVotes | MapChooser",
 	author = "AlliedModders LLC and Powerlord",
 	description = "Automated Map Voting",
-	version = "26w40a",
+	version = "26w43a",
 	url = "https://github.com/Heapons/sourcemod-nativevotes-updated/"
 };
 
@@ -94,7 +94,6 @@ enum
 	mapvote_voteduration,
 	mapvote_runoff,
 	mapvote_runoffpercent,
-	mapvote_mapeval_random,
 	nativevotes_emptymapchange,
 	mapcycle_auto,
 	mapcycle_exclude,
@@ -129,7 +128,6 @@ bool g_WaitingForVote;
 bool g_MapVoteCompleted;
 bool g_ChangeMapAtRoundEnd;
 bool g_ChangeMapInProgress;
-int g_mapFileSerial = -1;
 
 MapChange g_ChangeTime;
 
@@ -146,28 +144,8 @@ int g_winCount[MAX_TEAMS];
 bool g_NativeVotes;
 bool g_RestInPawn;
 char g_CurrentMap[PLATFORM_MAX_PATH];
-char g_GameMode[32];
 
-#tryinclude "nativevotes_mapeval.inc"
-#if !defined _nativevotes_mapeval_included
-#define MAP_EVAL_DEFAULT_VOTE_WEIGHT 1
-stock void MapEval_Init() {}
-stock void LoadMapEvalConfig() {}
-stock int GetMapEvalVoteWeight(const char[] map)
-{
-	if (map[0] || !map[0]) {}
-	return MAP_EVAL_DEFAULT_VOTE_WEIGHT;
-}
-stock bool PopulateNextVoteFromMapEval() { return false; }
-stock bool CopyRandomMapEvalMap(char[] buffer, int maxlen)
-{
-	if (maxlen > 0)
-	{
-		buffer[0] = '\0';
-	}
-	return false;
-}
-#endif
+#include "nativevotes_mapeval.inc"
 
 #tryinclude "nativevotes_empty_map_change.inc"
 #if !defined _nativevotes_empty_map_change_included
@@ -222,7 +200,6 @@ public void OnPluginStart()
 	g_ConVars[mapvote_voteduration]  		= CreateConVar("sm_mapvote_voteduration", "20", "Specifies how long the mapvote should be available for.", _, true, 5.0);
 	g_ConVars[mapvote_runoff] 		 		= CreateConVar("sm_mapvote_runoff", "0", "Hold run of votes if winning choice is less than a certain margin.", _, true, 0.0, true, 1.0);
 	g_ConVars[mapvote_runoffpercent] 		= CreateConVar("sm_mapvote_runoffpercent", "50", "If winning choice has less than this percent of votes, hold a runoff.", _, true, 0.0, true, 100.0);
-	g_ConVars[mapvote_mapeval_random]		= CreateConVar("sm_mapvote_mapeval_random", "1", "Use configs/mapeval.cfg to choose random map vote options. If disabled, random options come from the map list.", _, true, 0.0, true, 1.0);
 	g_ConVars[nativevotes_emptymapchange]	= CreateConVar("sm_nativevotes_emptymapchange", "30.0", "If above 0, change to a random mapeval.cfg map when the server is empty for this many minutes.", _, true, 0.0);
 	g_ConVars[mapcycle_auto]         		= CreateConVar("sm_mapcycle_auto", "0", "Specifies whether or not to automatically populate the maps list.", _, true, 0.0, true, 1.0);
 	g_ConVars[mapcycle_exclude]      		= CreateConVar("sm_mapcycle_exclude", ".*test.*|background01|^tr.*$", "Specifies which maps shouldn't be automatically added with a regex pattern.");
@@ -288,6 +265,7 @@ public void OnPluginStart()
 public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max)
 {
 	RegPluginLibrary("mapchooser");	
+	MapEval_RegisterNatives();
 	MarkNativeAsOptional("AdminsDB_GetClientWhitelistLevel");
 	
 	CreateNative("NominateMap", Native_NominateMap);
@@ -363,24 +341,16 @@ public void OnConfigsExecuted()
 	RecentMapHistory_Trim();
 	RecentMapHistory_Save();
 	UpdateCurrentMap();
-	UpdateGameModeFromMap();
 
 	if (g_ConVars[workshop_cleanup].BoolValue)
 	{
 		CleanupWorkshopMaps();
 	}
 
-	if (g_ConVars[mapcycle_auto].BoolValue)
+	if (!g_CatalogPrimary && g_ConVars[mapcycle_auto].BoolValue)
 	{
 		PopulateMapList();
-	}
-
-	if (ReadMapList(g_MapList, g_mapFileSerial, "mapchooser", MAPLIST_FLAG_CLEARARRAY|MAPLIST_FLAG_MAPSFOLDER) != null)
-	{
-		if (g_mapFileSerial == -1)
-		{
-			LogError("Unable to create a valid map list.");
-		}
+		LoadMapEvalConfig();
 	}
 
 	g_TotalRounds = g_IsTF2 ? GameRules_GetProp("m_nRoundsPlayed") : 0;
@@ -836,6 +806,7 @@ void InitiateVote(MapChange when, ArrayList inputlist=null)
 	
 	// Apply current file edits before constructing the vote and its weight cache.
 	LoadMapEvalConfig();
+	CreateNextVote();
 	g_ChangeTime = when;
 	
 	g_WaitingForVote = false;
@@ -1163,14 +1134,12 @@ void MapVote_ClearWeightCache()
     if(g_MapVoteStartingVoteCache!=null)g_MapVoteStartingVoteCache.Clear();
 }
 
-int GetMapEvalStartingVotes(const char[] map, int demotedOptions)
+int GetMapEvalStartingVotes(const char[] map)
 {
     int weight = GetMapEvalVoteWeight(map);
     int bonus = !IsMapVoteSpecialItem(map) && weight > MAP_EVAL_DEFAULT_VOTE_WEIGHT
         ? weight - MAP_EVAL_DEFAULT_VOTE_WEIGHT : 0;
-    // Each -1 option contributes one vote to every OTHER option. Multiple
-    // demotions therefore remain nonnegative and tied demotions stay equal.
-    return bonus + demotedOptions - (weight == -1 ? 1 : 0);
+    return bonus;
 }
 
 void MapVote_GetItem(Handle menu, bool nativeVote, int item, char[] map, int length)
@@ -1188,18 +1157,16 @@ void MapVote_BuildStartingVotes(Handle menu, bool nativeVote, int count, int[] s
         for(int item=0;item<count;item++)starts[item]=g_MapVoteStartingVoteCache.Get(item);
         return;
     }
-    int demoted;
     char[][] maps = new char[count][PLATFORM_MAX_PATH];
     for (int item = 0; item < count; item++)
     {
         MapVote_GetItem(menu, nativeVote, item, maps[item], PLATFORM_MAX_PATH);
-        if (GetMapEvalVoteWeight(maps[item]) == -1) demoted++;
     }
     if(g_MapVoteStartingVoteCache==null)g_MapVoteStartingVoteCache=new ArrayList();
     g_MapVoteStartingVoteCache.Clear();
     for (int item = 0; item < count; item++)
     {
-        starts[item] = GetMapEvalStartingVotes(maps[item], demoted);
+        starts[item] = GetMapEvalStartingVotes(maps[item]);
         g_MapVoteStartingVoteCache.Push(starts[item]);
     }
     g_MapVoteWeightCacheOwner=menu;g_MapVoteWeightCacheNative=nativeVote;
@@ -1792,82 +1759,11 @@ void UpdateCurrentMap()
 	GetCurrentMap(g_CurrentMap, sizeof(g_CurrentMap));
 }
 
-void UpdateGameModeFromMap()
-{
-	g_GameMode[0] = '\0';
-
-	char mapName[PLATFORM_MAX_PATH];
-	strcopy(mapName, sizeof(mapName), g_CurrentMap);
-	ReplaceStringEx(mapName, sizeof(mapName), "workshop/", "");
-
-	if (StrContains(mapName, "koth_", false) == 0)
-	{
-		strcopy(g_GameMode, sizeof(g_GameMode), "koth");
-	}
-	else if (StrContains(mapName, "plr_", false) == 0 || StrContains(mapName, "pl_", false) == 0)
-	{
-		strcopy(g_GameMode, sizeof(g_GameMode), "pl");
-	}
-	else if (StrContains(mapName, "cp_", false) == 0)
-	{
-		strcopy(g_GameMode, sizeof(g_GameMode), "cp");
-	}
-	else if (StrContains(mapName, "ctf_", false) == 0)
-	{
-		strcopy(g_GameMode, sizeof(g_GameMode), "ctf");
-	}
-	else
-	{
-		strcopy(g_GameMode, sizeof(g_GameMode), "other");
-	}
-}
 
 void CreateNextVote()
 {
 	g_NextMapList.Clear();
-
-	if (PopulateNextVoteFromMapEval())
-	{
-		return;
-	}
-	
-	char map[PLATFORM_MAX_PATH];
-	// tempMaps is a resolved map list
-	ArrayList tempMaps = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
-	
-	for (int i = 0; i < g_MapList.Length; i++)
-	{
-		g_MapList.GetString(i, map, sizeof(map));
-		if (FindMap(map, map, sizeof(map)) != FindMap_NotFound)
-		{
-			tempMaps.PushString(map);
-		}
-	}
-	
-	//GetCurrentMap always returns a resolved map
-	GetCurrentMap(map, sizeof(map));
-	RemoveStringFromArray(tempMaps, map);
-	
-	if (g_ConVars[mapvote_exclude].IntValue && tempMaps.Length > g_ConVars[mapvote_exclude].IntValue)
-	{
-		int validStart = g_OldMapList.Length - g_RecentMapHistoryValidCount;
-		for (int i = validStart; i < g_OldMapList.Length; i++)
-		{
-			g_OldMapList.GetString(i, map, sizeof(map));
-			RemoveStringFromArray(tempMaps, map);
-		}
-	}
-
-	int limit = (g_ConVars[mapvote_include].IntValue < tempMaps.Length ? g_ConVars[mapvote_include].IntValue : tempMaps.Length);
-	for (int i = 0; i < limit; i++)
-	{
-		int b = GetRandomInt(0, tempMaps.Length - 1);
-		tempMaps.GetString(b, map, sizeof(map));		
-		g_NextMapList.PushString(map);
-		tempMaps.Erase(b);
-	}
-	
-	delete tempMaps;
+	PopulateNextVoteFromMapEval();
 }
 
 bool CanVoteStart()
@@ -2469,11 +2365,6 @@ void CleanupWorkshopMaps()
 
 void RequestFrame_ReadMapList()
 {
-	if (ReadMapList(g_MapList, g_mapFileSerial, "mapchooser", MAPLIST_FLAG_CLEARARRAY|MAPLIST_FLAG_MAPSFOLDER) != null)
-	{
-		if (g_mapFileSerial == -1)
-		{
-			LogError("Unable to create a valid map list.");
-		}
-	}
+	LoadMapEvalConfig();
+	if (!g_HasVoteStarted && !g_WaitingForVote) CreateNextVote();
 }

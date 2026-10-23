@@ -44,6 +44,7 @@
 
 #include "nativevotes_statistics.inc"
 #include "nativevotes_performance.inc"
+#include "nativevotes_catalog_api.inc"
 
 native int Filters_GetChatName(int client, char[] buffer, int maxlen);
 native void NativeVotes_GetRTVProgress(int &votes, int &needed);
@@ -56,7 +57,7 @@ public Plugin myinfo =
 	name = "NativeVotes | Map Nominations",
 	author = "AlliedModders LLC and Powerlord",
 	description = "Provides Map Nominations",
-	version = "26w40a",
+	version = "26w43a",
 	url = "https://github.com/Heapons/sourcemod-nativevotes-updated/"
 };
 
@@ -86,7 +87,7 @@ Menu g_MapMenu = null;
 ArrayList g_MapList = null;
 ArrayList g_RandomNominationList = null;
 ArrayList g_NominatedStatusMaps = null;
-int g_mapFileSerial = -1;
+bool g_CatalogMenuReady;
 
 #define MAPSTATUS_ENABLED  		   	(1<<0)
 #define MAPSTATUS_DISABLED 		   	(1<<1)
@@ -152,7 +153,7 @@ public void OnPluginStart()
 	
 	RegAdminCmd("sm_nominate_addmap", Command_Addmap, ADMFLAG_CHANGEMAP, "sm_nominate_addmap <mapname> - Forces a map to be on the next mapvote.");
 	RegAdminCmd("sm_reload_nominations", Command_ReloadNominations, ADMFLAG_RCON, "Reload the nomination map cycle in-place");
-	RegAdminCmd("sm_refresh_mapcycle", Command_ReloadNominations, ADMFLAG_RCON, "Force nativevotes nominations to re-read mapcycle.txt");
+	RegAdminCmd("sm_refresh_mapcycle", Command_ReloadNominations, ADMFLAG_RCON, "Reload mapeval.cfg (mapcycle.txt fallback), categories, levels, and random pools");
 
 	g_MapTrie = new StringMap();
 
@@ -272,20 +273,21 @@ public void OnConfigsExecuted()
 
 bool ReloadNominationMapList(bool force)
 {
-	if (force)
-	{
-		g_mapFileSerial = -1;
-	}
-
-	if (ReadMapList(g_MapList, g_mapFileSerial, "nominations", MAPLIST_FLAG_CLEARARRAY|MAPLIST_FLAG_MAPSFOLDER) == null && g_mapFileSerial == -1)
-	{
-		return false;
-	}
+	if (force && !NativeVotes_ReloadMapCatalog()) return false;
+	if (NativeVotes_CopyMapCatalog(g_MapList) == 0) return false;
 
 	BuildMapMenu();
 	SyncNominatedMapStatuses();
 	BuildRandomNominationList();
+	g_CatalogMenuReady = true;
 	return true;
+}
+
+public void NativeVotes_OnMapCatalogReloaded()
+{
+	// The first configs-executed callback initializes menus. Later refreshes
+	// atomically replace this view using the authoritative MapChooser catalog.
+	if (g_CatalogMenuReady) ReloadNominationMapList(false);
 }
 
 public void OnNominationRemoved(const char[] map, int owner)
@@ -377,11 +379,13 @@ Action Command_ReloadNominations(int client, int args)
 {
 	if (!ReloadNominationMapList(true))
 	{
-		CReplyToCommand(client, "[{lightgreen}Nominations\x01] Unable to re-read mapcycle.txt.");
+		CReplyToCommand(client, "[{lightgreen}Nominations\x01] Unable to load mapeval.cfg or its mapcycle.txt fallback.");
 		return Plugin_Handled;
 	}
 
-	CReplyToCommand(client, "[{lightgreen}Nominations\x01] Re-read mapcycle.txt. {green}%d\x01 maps are available for nomination.", g_MapList.Length);
+	char source[64];
+	NativeVotes_GetMapCatalogSource(source, sizeof(source));
+	CReplyToCommand(client, "[{lightgreen}Nominations\x01] Reloaded %s. {green}%d\x01 maps are available for nomination.", source, g_MapList.Length);
 	return Plugin_Handled;
 }
 
@@ -943,9 +947,89 @@ void OpenNominationMenu(int client)
 	float startedAt = GetEngineTime();
 	RefreshRecentlyPlayedMapStatuses();
 	SyncNominatedMapStatuses();
-	g_MapMenu.SetTitle("%t", "Nominate Title", client);
-	g_MapMenu.Display(client, MENU_TIME_FOREVER);
+	Menu menu = BuildNominationCategoryMenu();
+	menu.Display(client, MENU_TIME_FOREVER);
 	RecordSlowNominationOperation("open_nomination_menu", startedAt, g_MapList.Length);
+}
+
+Menu BuildNominationCategoryMenu()
+{
+	Menu menu = new Menu(MenuHandler_CategorySelect);
+	menu.SetTitle("Nominate a map: Categories");
+	menu.AddItem("popular maps", "Popular");
+	menu.AddItem("@random", "Random 50");
+	ArrayList categories = new ArrayList(ByteCountToCells(64));
+	NativeVotes_CopyMapCategories(categories);
+	char category[64], label[64];
+	for (int i = 0; i < categories.Length; i++)
+	{
+		categories.GetString(i, category, sizeof(category));
+		GetCategoryLabel(category, label, sizeof(label));
+		menu.AddItem(category, label);
+	}
+	delete categories;
+	return menu;
+}
+
+void GetCategoryLabel(const char[] category, char[] label, int maxlen)
+{
+	if (StrEqual(category, "koth", false)) strcopy(label, maxlen, "KOTH");
+	else if (StrEqual(category, "payload", false)) strcopy(label, maxlen, "Payload");
+	else if (StrEqual(category, "control points", false)) strcopy(label, maxlen, "Control Points");
+	else if (StrEqual(category, "attack/defend", false)) strcopy(label, maxlen, "Attack/Defend");
+	else if (StrEqual(category, "popular maps", false)) strcopy(label, maxlen, "Popular");
+	else strcopy(label, maxlen, category);
+}
+
+public int MenuHandler_CategorySelect(Menu menu, MenuAction action, int client, int item)
+{
+	if (action == MenuAction_Select)
+	{
+		char category[64];
+		menu.GetItem(item, category, sizeof(category));
+		if (StrEqual(category, "@random")) OpenRandomNominationMenu(client);
+		else OpenCategoryNominationMenu(client, category);
+	}
+	else if (action == MenuAction_End) delete menu;
+	return 0;
+}
+
+void OpenCategoryNominationMenu(int client, const char[] category)
+{
+	RefreshRecentlyPlayedMapStatuses();
+	SyncNominatedMapStatuses();
+	Menu menu = BuildCategoryNominationMenu(category);
+	if (menu == null)
+	{
+		CPrintToChat(client, "{lightgreen}[Nominations]{default} No available maps in this category.");
+		OpenNominationMenu(client);
+		return;
+	}
+	menu.Display(client, MENU_TIME_FOREVER);
+}
+
+Menu BuildCategoryNominationMenu(const char[] category)
+{
+	ArrayList maps = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
+	NativeVotes_CopyMapCatalog(maps, category);
+	if (maps.Length == 0)
+	{
+		delete maps;
+		return null;
+	}
+	Menu menu = new Menu(MenuHandler_MapSelect, MENU_ACTIONS_DEFAULT|MenuAction_DrawItem|MenuAction_DisplayItem);
+	char label[64], map[PLATFORM_MAX_PATH], displayName[PLATFORM_MAX_PATH];
+	GetCategoryLabel(category, label, sizeof(label));
+	menu.SetTitle("Nominate: %s", label);
+	menu.ExitBackButton = true;
+	for (int i = 0; i < maps.Length; i++)
+	{
+		maps.GetString(i, map, sizeof(map));
+		GetMapDisplayName(map, displayName, sizeof(displayName));
+		menu.AddItem(map, displayName);
+	}
+	delete maps;
+	return menu;
 }
 
 void OpenRandomNominationMenu(int client)
@@ -963,6 +1047,7 @@ void OpenRandomNominationMenu(int client)
 	Menu menu = new Menu(MenuHandler_MapSelect, MENU_ACTIONS_DEFAULT|MenuAction_DrawItem|MenuAction_DisplayItem);
 	menu.SetTitle("Random maps:");
 	menu.ExitButton = true;
+	menu.ExitBackButton = true;
 
 	char map[PLATFORM_MAX_PATH];
 	char displayName[PLATFORM_MAX_PATH];
@@ -1288,6 +1373,10 @@ public int MenuHandler_MapSelect(Menu menu, MenuAction action, int param1, int p
 			menu.GetItem(param2, mapname, sizeof(mapname));
 			AttemptNominate(param1, mapname, sizeof(mapname), false);
 		}
+		case MenuAction_Cancel:
+		{
+			if (param2 == MenuCancel_ExitBack) OpenNominationMenu(param1);
+		}
 		case MenuAction_DrawItem:
 		{
 			char map[PLATFORM_MAX_PATH];
@@ -1296,8 +1385,8 @@ public int MenuHandler_MapSelect(Menu menu, MenuAction action, int param1, int p
 			int status;
 			if (!g_MapTrie.GetValue(map, status))
 			{
-				LogError("Menu selection of item not in trie. Major logic problem somewhere.");
-				return ITEMDRAW_DEFAULT;
+				// An already-open menu may outlive an administrative refresh.
+				return ITEMDRAW_DISABLED;
 			}
 			
 			if ((status & MAPSTATUS_DISABLED) == MAPSTATUS_DISABLED)
@@ -1316,7 +1405,6 @@ public int MenuHandler_MapSelect(Menu menu, MenuAction action, int param1, int p
 			
 			if (!g_MapTrie.GetValue(mapname, status))
 			{
-				LogError("Menu selection of item not in trie. Major logic problem somewhere.");
 				return 0;
 			}
 			
