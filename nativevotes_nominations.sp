@@ -57,7 +57,7 @@ public Plugin myinfo =
 	name = "NativeVotes | Map Nominations",
 	author = "AlliedModders LLC and Powerlord",
 	description = "Provides Map Nominations",
-	version = "26w43c",
+	version = "26w43d",
 	url = "https://github.com/Heapons/sourcemod-nativevotes-updated/"
 };
 
@@ -205,7 +205,7 @@ public void ConVarChanged_NextMap(ConVar convar, const char[] oldValue, const ch
 		return;
 
 	char displayName[PLATFORM_MAX_PATH];
-	GetMapDisplayName(newValue, displayName, sizeof(displayName));
+	NativeVotes_GetCachedMapDisplayName(newValue, displayName, sizeof(displayName));
 	CPrintToChatAll("{lightgreen}[Nominations]{default} Next map changed to {gold}%s{default}!", displayName);
 }
 
@@ -273,7 +273,13 @@ public void OnConfigsExecuted()
 
 bool ReloadNominationMapList(bool force)
 {
-	if (force && !NativeVotes_ReloadMapCatalog()) return false;
+	if (force)
+	{
+		bool alreadyReady = g_CatalogMenuReady;
+		if (!NativeVotes_ReloadMapCatalog()) return false;
+		// The synchronous catalog forward already rebuilt an initialized view.
+		if (alreadyReady) return true;
+	}
 	if (NativeVotes_CopyMapCatalog(g_MapList) == 0) return false;
 
 	BuildMapMenu();
@@ -281,6 +287,18 @@ bool ReloadNominationMapList(bool force)
 	BuildRandomNominationList();
 	g_CatalogMenuReady = true;
 	return true;
+}
+
+FindMapResult ResolveNominationMap(const char[] map, char[] resolvedMap, int maxlen)
+{
+	int status;
+	if (g_MapTrie != null && g_MapTrie.GetValue(map, status))
+	{
+		strcopy(resolvedMap, maxlen, map);
+		return FindMap_Found;
+	}
+	// User-supplied aliases/out-of-catalog maps still require engine resolution.
+	return FindMap(map, resolvedMap, maxlen);
 }
 
 public void NativeVotes_OnMapCatalogReloaded()
@@ -293,7 +311,7 @@ public void NativeVotes_OnMapCatalogReloaded()
 public void OnNominationRemoved(const char[] map, int owner)
 {
 	char resolvedMap[PLATFORM_MAX_PATH];
-	if (FindMap(map, resolvedMap, sizeof(resolvedMap)) == FindMap_NotFound)
+	if (ResolveNominationMap(map, resolvedMap, sizeof(resolvedMap)) == FindMap_NotFound)
 	{
 		strcopy(resolvedMap, sizeof(resolvedMap), map);
 	}
@@ -339,7 +357,7 @@ public Action Command_Addmap(int client, int args)
 	char mapname[PLATFORM_MAX_PATH], resolvedMap[PLATFORM_MAX_PATH];
 	GetCmdArg(1, mapname, sizeof(mapname));
 
-	if (FindMap(mapname, resolvedMap, sizeof(resolvedMap)) == FindMap_NotFound)
+	if (ResolveNominationMap(mapname, resolvedMap, sizeof(resolvedMap)) == FindMap_NotFound)
 	{
 		// We couldn't resolve the map entry to a filename, so...
 		CReplyToCommand(client, "[{lightgreen}Nominations\x01] %t", "Map was not found", mapname);
@@ -347,7 +365,7 @@ public Action Command_Addmap(int client, int args)
 	}
 	
 	char displayName[PLATFORM_MAX_PATH];
-	GetMapDisplayName(resolvedMap, displayName, sizeof(displayName));
+	NativeVotes_GetCachedMapDisplayName(resolvedMap, displayName, sizeof(displayName));
 	Format(displayName, sizeof(displayName), "\x05%s\x01", displayName);
 	
 	int status;
@@ -410,7 +428,7 @@ bool GetNextMapDisplayName(char[] displayName, int maxLength)
 		return false;
 	}
 
-	GetMapDisplayName(nextMap, displayName, maxLength);
+	NativeVotes_GetCachedMapDisplayName(nextMap, displayName, maxLength);
 	return true;
 }
 
@@ -491,7 +509,7 @@ public Action Command_ShowNominations(int client, int args)
 		char map[PLATFORM_MAX_PATH];
 		char displayName[PLATFORM_MAX_PATH];
 		maps.GetString(i, map, sizeof(map));
-		GetMapDisplayName(map, displayName, sizeof(displayName));
+		NativeVotes_GetCachedMapDisplayName(map, displayName, sizeof(displayName));
 
 		int owner = owners.Get(i);
 		if (owner > 0 && IsClientInGame(owner))
@@ -680,7 +698,7 @@ Action Nominations_HandleRequest(int client, const char[] commandName, const cha
 			g_MapList.GetString(results.Get(i), mapResult, sizeof(mapResult));
 
 			char displayName[PLATFORM_MAX_PATH];
-			GetMapDisplayName(mapResult, displayName, sizeof(displayName));
+			NativeVotes_GetCachedMapDisplayName(mapResult, displayName, sizeof(displayName));
 
 			menu.AddItem(mapResult, displayName);
 		}
@@ -735,7 +753,7 @@ void QueueRandomNomination(int client)
 	for (int i = 0; i < g_MapList.Length; i++)
 	{
 		g_MapList.GetString(i, map, sizeof(map));
-		FindMap(map, map, sizeof(map));
+		ResolveNominationMap(map, map, sizeof(map));
 
 		if (!IsMapEnabledForNomination(map))
 		{
@@ -763,7 +781,7 @@ void QueueRandomNomination(int client)
 	}
 
 	char displayName[PLATFORM_MAX_PATH];
-	GetMapDisplayName(map, displayName, sizeof(displayName));
+	NativeVotes_GetCachedMapDisplayName(map, displayName, sizeof(displayName));
 	strcopy(g_szRandomNominateMap[client], sizeof(g_szRandomNominateMap[]), map);
 	g_iRandomNominateUserId[client] = GetClientUserId(client);
 	g_hRandomNominateTimer[client] = CreateTimer(RANDOM_NOMINATION_DELAY, Timer_RandomNominate, client);
@@ -836,7 +854,7 @@ void AttemptNominate(int client, const char[] map, int size, bool isVoteMenu)
 	RefreshRecentlyPlayedMapStatuses();
 	float startedAt = GetEngineTime();
 	char mapname[PLATFORM_MAX_PATH];
-	if (FindMap(map, mapname, size) == FindMap_NotFound)
+	if (ResolveNominationMap(map, mapname, size) == FindMap_NotFound)
 	{
 		// We couldn't resolve the map entry to a filename, so...
 		CReplyToCommand(client, "[{lightgreen}Nominations\x01] %t", "Map was not found", mapname);
@@ -849,7 +867,7 @@ void AttemptNominate(int client, const char[] map, int size, bool isVoteMenu)
 	}
 	
 	char displayName[PLATFORM_MAX_PATH];
-	GetMapDisplayName(mapname, displayName, sizeof(displayName));
+	NativeVotes_GetCachedMapDisplayName(mapname, displayName, sizeof(displayName));
 	Format(displayName, sizeof(displayName), "\x05%s\x01", displayName);
 	SyncNominatedMapStatuses();
 	
@@ -1013,7 +1031,7 @@ Menu BuildCategoryNominationMenu(const char[] category)
 	for (int i = 0; i < maps.Length; i++)
 	{
 		maps.GetString(i, map, sizeof(map));
-		GetMapDisplayName(map, displayName, sizeof(displayName));
+		NativeVotes_GetCachedMapDisplayName(map, displayName, sizeof(displayName));
 		menu.AddItem(map, displayName);
 	}
 	delete maps;
@@ -1042,7 +1060,7 @@ void OpenRandomNominationMenu(int client)
 	for (int i = 0; i < g_RandomNominationList.Length; i++)
 	{
 		g_RandomNominationList.GetString(i, map, sizeof(map));
-		GetMapDisplayName(map, displayName, sizeof(displayName));
+		NativeVotes_GetCachedMapDisplayName(map, displayName, sizeof(displayName));
 		menu.AddItem(map, displayName);
 	}
 
@@ -1067,7 +1085,6 @@ void BuildRandomNominationList()
 	for (int i = 0; i < g_MapList.Length; i++)
 	{
 		g_MapList.GetString(i, map, sizeof(map));
-		FindMap(map, map, sizeof(map));
 		if (IsMapEnabledForNomination(map))
 		{
 			candidates.PushString(map);
@@ -1120,7 +1137,7 @@ void SyncNominatedMapStatuses()
 	for (int i = 0; i < nominatedMaps.Length; i++)
 	{
 		nominatedMaps.GetString(i, map, sizeof(map));
-		if (FindMap(map, resolvedMap, sizeof(resolvedMap)) == FindMap_NotFound)
+		if (ResolveNominationMap(map, resolvedMap, sizeof(resolvedMap)) == FindMap_NotFound)
 		{
 			strcopy(resolvedMap, sizeof(resolvedMap), map);
 		}
@@ -1209,7 +1226,7 @@ void RefreshRecentlyPlayedMapStatuses()
 	for (int i = 0; i < excludeMaps.Length; i++)
 	{
 		excludeMaps.GetString(i, map, sizeof(map));
-		if (FindMap(map, resolvedMap, sizeof(resolvedMap)) == FindMap_NotFound)
+		if (ResolveNominationMap(map, resolvedMap, sizeof(resolvedMap)) == FindMap_NotFound)
 		{
 			strcopy(resolvedMap, sizeof(resolvedMap), map);
 		}
@@ -1298,10 +1315,9 @@ void BuildMapMenu()
 		
 		g_MapList.GetString(i, map, sizeof(map));
 		
-		FindMap(map, map, sizeof(map));
-		
+		// Names were canonicalized and validated by the catalog owner.
 		char displayName[PLATFORM_MAX_PATH];
-		GetMapDisplayName(map, displayName, sizeof(displayName));
+		NativeVotes_GetCachedMapDisplayName(map, displayName, sizeof(displayName));
 
 		if (g_ConVars[excludecurrent].BoolValue)
 		{
@@ -1399,7 +1415,7 @@ public int MenuHandler_MapSelect(Menu menu, MenuAction action, int param1, int p
 			if ((status & MAPSTATUS_DISABLED) == MAPSTATUS_DISABLED)
 			{
 				char displayName[PLATFORM_MAX_PATH];
-				GetMapDisplayName(mapname, displayName, sizeof(displayName));
+				NativeVotes_GetCachedMapDisplayName(mapname, displayName, sizeof(displayName));
 
 				if ((status & MAPSTATUS_EXCLUDE_CURRENT) == MAPSTATUS_EXCLUDE_CURRENT)
 				{
@@ -1528,7 +1544,7 @@ public Action NativeVotes_OverrideMaps(StringMap mapList)
 		}
 		
 		char displayName[PLATFORM_MAX_PATH];
-		GetMapDisplayName(map, displayName, sizeof(displayName));
+		NativeVotes_GetCachedMapDisplayName(map, displayName, sizeof(displayName));
 
 		// Display name first
 		mapList.SetString(displayName, map);

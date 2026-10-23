@@ -11,6 +11,10 @@ char g_CurrentMap[PLATFORM_MAX_PATH], excluded[64];
 char probePrimaryAbsolute[PLATFORM_MAX_PATH];
 bool g_HasVoteStarted, g_WaitingForVote;
 int checks, failures;
+bool g_CatalogMenuReady;
+int menuBuilds;
+int resolutionCalls, validationSize = 32, validationStamp = 1;
+char removedMap[64], changedMap[64];
 #define RANDOM_NOMINATION_MENU_SIZE 50
 #define PRIMARY "addons/sourcemod/data/nativevotes_catalog_probe_primary.cfg"
 #define CYCLE "cfg/nativevotes_catalog_probe_cycle.txt"
@@ -25,8 +29,24 @@ int ProbeBuildPath(PathType type, char[] buffer, int maxlen, const char[] format
 ConVar ProbeFindConVar(const char[] name) { return StrEqual(name,"mapcyclefile") ? probeCycle : null; }
 FindMapResult ProbeFindMap(const char[] map, char[] output, int maxlen)
 {
-    if (StrContains(map, "missing_") == 0) return FindMap_NotFound;
+    resolutionCalls++;
+    if (StrContains(map, "missing_") == 0 || (removedMap[0] && StrEqual(map, removedMap))) return FindMap_NotFound;
     strcopy(output,maxlen,map); return FindMap_Found;
+}
+int ProbeFileSize(const char[] path, bool valve = false, const char[] id = "GAME")
+{
+    #pragma unused valve
+    #pragma unused id
+    char map[64];FormatEx(map,sizeof(map),"maps/%s.bsp",removedMap);
+    if(removedMap[0]&&StrEqual(path,map))return -1;
+    FormatEx(map,sizeof(map),"maps/%s.bsp",changedMap);
+    return changedMap[0]&&StrEqual(path,map)?validationSize:32;
+}
+int ProbeFileTime(const char[] path, FileTimeMode mode)
+{
+    #pragma unused mode
+    char map[64];FormatEx(map,sizeof(map),"maps/%s.bsp",changedMap);
+    return changedMap[0]&&StrEqual(path,map)?validationStamp:1;
 }
 bool ProbeMapValid(const char[] map) { return StrContains(map,"missing_") != 0; }
 void ProbeLog(const char[] format, any ...)
@@ -42,16 +62,25 @@ bool IsMapEnabledForNomination(const char[] map) { int status; return g_MapTrie.
 #define BuildPath ProbeBuildPath
 #define FindConVar ProbeFindConVar
 #define FindMap ProbeFindMap
+#define FileSize ProbeFileSize
+#define GetFileTime ProbeFileTime
 #define IsMapValid ProbeMapValid
 #define LogMessage ProbeLog
 #include "nativevotes_mapeval.inc"
 #undef BuildPath
 #undef FindConVar
 #undef FindMap
+#undef FileSize
+#undef GetFileTime
 #undef IsMapValid
 #undef LogMessage
 
 // Direct adapters for the menu factories; production uses the equivalent natives.
+bool NativeVotes_GetCachedMapDisplayName(const char[] map,char[] output,int maxlen)
+{
+    if(g_CatalogDisplayNames!=null&&g_CatalogDisplayNames.GetString(map,output,maxlen))return true;
+    Catalog_FormatResolvedDisplayName(map,output,maxlen);return true;
+}
 int NativeVotes_CopyMapCategories(ArrayList output)
 {
     output.Clear(); char category[64];
@@ -66,6 +95,18 @@ int NativeVotes_CopyMapCatalog(ArrayList output,const char[] category="")
     char map[PLATFORM_MAX_PATH];
     for(int i=0;i<source.Length;i++){source.GetString(i,map,sizeof(map));output.PushString(map);}
     return output.Length;
+}
+bool NativeVotes_ReloadMapCatalog(){return LoadMapEvalConfig();}
+void BuildMapMenu()
+{
+    menuBuilds++;g_MapTrie.Clear();char map[PLATFORM_MAX_PATH];
+    for(int i=0;i<g_MapList.Length;i++){g_MapList.GetString(i,map,sizeof(map));g_MapTrie.SetValue(map,1);}
+}
+void SyncNominatedMapStatuses(){}
+#include "catalog_reload_under_test.inc"
+public void NativeVotesProbe_OnCatalogReloaded()
+{
+    if(g_CatalogMenuReady)ReloadNominationMapList(false);
 }
 public int MenuHandler_CategorySelect(Menu menu, MenuAction action, int client, int item) {return 0;}
 public int MenuHandler_MapSelect(Menu menu, MenuAction action, int client, int item) {return 0;}
@@ -153,6 +194,31 @@ public Action RunProbe(int client,int args)
     Check(g_MapList.Length==5,"all installed levels are nominatable; missing map filtered");
     Check(g_CatalogCategories.Length==2,"popular is not a gamemode");
     Check(g_CatalogPopular.Length==2,"popular view retained");
+    int before = resolutionCalls;
+    Check(Catalog_EnsureLoaded() && resolutionCalls==before,"vote uses existing catalog without engine resolution");
+    ArrayList cachedPool=new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
+    Catalog_BuildRandomPool(cachedPool);delete cachedPool;
+    Check(resolutionCalls==before,"random pool trusts validated catalog snapshot");
+    LoadMapEvalConfig();
+    Check(resolutionCalls==before+1,"unchanged refresh only retries previously missing map");
+    strcopy(changedMap,sizeof(changedMap),"level1");validationSize=64;
+    before=resolutionCalls;LoadMapEvalConfig();
+    Check(resolutionCalls==before+2,"changed BSP size requires engine revalidation");
+    validationStamp=2;before=resolutionCalls;LoadMapEvalConfig();
+    Check(resolutionCalls==before+2,"same-size BSP modification requires revalidation");
+    strcopy(removedMap,sizeof(removedMap),"level2");LoadMapEvalConfig();
+    Check(g_MapList.FindString("level2")==-1,"refresh removes a deleted BSP instead of trusting cached validity");
+    removedMap[0]=changedMap[0]='\0';validationSize=32;validationStamp=1;LoadMapEvalConfig();
+    char cachedDisplay[PLATFORM_MAX_PATH];before=resolutionCalls;
+    Check(Catalog_GetMapDisplayName("level3",cachedDisplay,sizeof(cachedDisplay))&&StrEqual(cachedDisplay,"level3")&&resolutionCalls==before,"cached display name requires no engine resolution");
+    Catalog_FormatResolvedDisplayName("workshop/cp_example.ugc123",cachedDisplay,sizeof(cachedDisplay));
+    Check(StrEqual(cachedDisplay,"cp_example"),"cached display formatting preserves workshop behavior");
+    Catalog_FormatResolvedDisplayName("folder\\cp_example.ugc123",cachedDisplay,sizeof(cachedDisplay));
+    Check(StrEqual(cachedDisplay,"cp_example"),"cached display formatting supports backslash paths");
+    Check(Catalog_WorkshopFilePath("workshop/pl_example.ugc123",440,cachedDisplay,sizeof(cachedDisplay))
+        &&StrEqual(cachedDisplay,"../steamapps/workshop/content/440/123/pl_example.bsp"),"Workshop fingerprint uses actual Steam content file");
+    Check(!Catalog_WorkshopFilePath("workshop/pl_example.ugc../123",440,cachedDisplay,sizeof(cachedDisplay)),"Workshop ID must contain only digits");
+    Check(!Catalog_WorkshopFilePath("workshop/../pl_example.ugc123",440,cachedDisplay,sizeof(cachedDisplay)),"Workshop name cannot traverse directories");
     Check(GetMapEvalLevel("zero")==0 && GetMapEvalLevel("unset")==0,"popular values never set map ratings");
     Check(GetMapEvalStartingVotes("zero")==0 && GetMapEvalStartingVotes("level1")==0,"0/1 have no bonus");
     Check(GetMapEvalStartingVotes("level2")==1 && GetMapEvalStartingVotes("level3")==2,"2/3 have +1/+2 bonus");
@@ -215,6 +281,10 @@ public Action RunProbe(int client,int args)
     WritePrimary(6);LoadMapEvalConfig();g_CatalogCategories.GetString(0,first,sizeof(first));g_CatalogCategories.GetString(1,second,sizeof(second));
     Check(StrEqual(first,"kOtH") && StrEqual(second,"cTf"),"second case-only refresh preserves mixed-case config names");
     WritePrimary();Check(LoadMapEvalConfig() && g_CatalogPopular.Length==2 && GetMapEvalLevel("level3")==3,"refresh restores levels/categories/popular together");
+    menuBuilds=0;g_CatalogMenuReady=false;
+    Check(ReloadNominationMapList(false)&&menuBuilds==1,"nomination consumer initializes once");
+    Check(ReloadNominationMapList(true)&&menuBuilds==2,"explicit refresh rebuilds consumer once, not through both forward and caller");
+    g_CatalogMenuReady=false;
     delete pool;
     File out=OpenFile("addons/sourcemod/data/nativevotes_catalog_probe_result.txt","w");out.WriteLine("checks=%d failures=%d",checks,failures);delete out;
     PrintToServer("[MapCatalogProbe] checks=%d failures=%d",checks,failures);

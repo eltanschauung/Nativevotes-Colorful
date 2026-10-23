@@ -4,6 +4,7 @@
 #define _nativevotes_mapeval_included
 
 #include <textparse>
+#include "nativevotes_map_cache.inc"
 
 #define MAP_EVAL_CONFIG_FILE "configs/mapeval.cfg"
 #define MAP_EVAL_DEFAULT_VOTE_WEIGHT 1
@@ -12,6 +13,7 @@
 
 ArrayList g_CatalogMaps, g_CatalogCategories, g_CatalogPopular;
 StringMap g_CatalogGroups, g_MapEvalVoteWeights;
+StringMap g_CatalogDisplayNames;
 GlobalForward g_CatalogReloaded;
 bool g_CatalogPrimary, g_CatalogLoaded, g_CatalogAttempted;
 int g_CatalogParseDepth;
@@ -25,6 +27,8 @@ void MapEval_Init()
     g_CatalogPopular = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
     g_CatalogGroups = new StringMap();
     g_MapEvalVoteWeights = new StringMap();
+    g_CatalogDisplayNames = new StringMap();
+    Catalog_ResetMapValidationCache();
     g_CatalogReloaded = new GlobalForward("NativeVotes_OnMapCatalogReloaded", ET_Ignore);
 }
 
@@ -34,6 +38,7 @@ void MapEval_RegisterNatives()
     CreateNative("NativeVotes_CopyMapCatalog", Catalog_NativeCopyMaps);
     CreateNative("NativeVotes_CopyMapCategories", Catalog_NativeCopyCategories);
     CreateNative("NativeVotes_GetMapCatalogSource", Catalog_NativeSource);
+    CreateNative("NativeVotes_GetCatalogMapDisplayName", Catalog_NativeDisplayName);
 }
 
 void Catalog_Clear()
@@ -54,6 +59,7 @@ void Catalog_Clear()
     g_CatalogPopular.Clear();
     g_CatalogGroups.Clear();
     g_MapEvalVoteWeights.Clear();
+    if (g_CatalogDisplayNames != null) g_CatalogDisplayNames.Clear();
 }
 
 int ParseMapEvalVoteWeight(const char[] value)
@@ -84,12 +90,16 @@ int GetMapEvalVoteWeight(const char[] map)
 bool Catalog_AddMap(const char[] map, ArrayList category, const char[] rawLevel)
 {
     char resolved[PLATFORM_MAX_PATH];
-    if (!map[0] || FindMap(map, resolved, sizeof(resolved)) == FindMap_NotFound)
+    if (!map[0] || !Catalog_ResolveInstalledMap(map, resolved, sizeof(resolved)))
         return true; // Preserve uninstalled config entries on disk, not in menus.
     int previous;
     if (g_MapEvalVoteWeights.GetValue(resolved, previous))
         return true; // Resolve map/workshop aliases to one entry; first rating wins.
     g_MapEvalVoteWeights.SetValue(resolved, ParseMapEvalVoteWeight(rawLevel));
+    if (g_CatalogDisplayNames == null) g_CatalogDisplayNames = new StringMap();
+    char display[PLATFORM_MAX_PATH];
+    Catalog_FormatResolvedDisplayName(resolved, display, sizeof(display));
+    g_CatalogDisplayNames.SetString(resolved, display);
     g_CatalogMaps.PushString(resolved);
     category.PushString(resolved);
     return true;
@@ -203,7 +213,7 @@ public SMCResult Catalog_ParseEntry(SMCParser parser, const char[] map, const ch
     if (g_CatalogParsingPopular)
     {
         char resolved[PLATFORM_MAX_PATH];
-        if (FindMap(map, resolved, sizeof(resolved)) != FindMap_NotFound
+        if (Catalog_ResolveInstalledMap(map, resolved, sizeof(resolved))
             && g_CatalogPopular.FindString(resolved) == -1)
             g_CatalogPopular.PushString(resolved);
     }
@@ -289,7 +299,7 @@ void Catalog_BuildRandomPool(ArrayList pool)
     {
         g_CatalogMaps.GetString(i, map, sizeof(map));
         if (GetMapEvalLevel(map) >= 1 && !StrEqual(map, g_CurrentMap, false)
-            && !RecentMapHistory_Contains(map) && IsMapValid(map))
+            && !RecentMapHistory_Contains(map))
             pool.PushString(map);
     }
 }
@@ -322,6 +332,29 @@ bool PopulateNextVoteFromMapEval()
     delete pool;
     // A primary file with no eligible maps must NEVER fall back to level 0.
     return g_CatalogLoaded;
+}
+
+bool Catalog_EnsureLoaded()
+{
+    return g_CatalogAttempted ? g_CatalogLoaded : LoadMapEvalConfig();
+}
+
+bool Catalog_GetMapDisplayName(const char[] map, char[] display, int maxlen)
+{
+    if (g_CatalogDisplayNames != null && g_CatalogDisplayNames.GetString(map, display, maxlen))
+        return true;
+    // Explicit external/admin maps still use the normal engine validation.
+    return GetMapDisplayName(map, display, maxlen);
+}
+
+public int Catalog_NativeDisplayName(Handle plugin, int params)
+{
+    char map[PLATFORM_MAX_PATH], display[PLATFORM_MAX_PATH];
+    GetNativeString(1, map, sizeof(map));
+    bool found = g_CatalogDisplayNames != null
+        && g_CatalogDisplayNames.GetString(map, display, sizeof(display));
+    SetNativeString(2, found ? display : "", GetNativeCell(3));
+    return found;
 }
 
 public int Catalog_NativeReload(Handle plugin, int params)

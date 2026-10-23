@@ -5,6 +5,39 @@ MapChooser owns the catalog. Nominations obtains snapshots through
 `sm_refresh_mapcycle` / `sm_reload_nominations` refresh the same catalog, menus,
 levels, Popular view, and the next automatic vote pool without restarting.
 
+Vote startup consumes the published catalog instead of implicitly refreshing
+it. Apply in-map file edits with `sm_refresh_mapcycle` / `sm_reload_nominations`.
+An initialized nomination view is rebuilt by the reload forward exactly once;
+the initiating refresh command does not repeat that rebuild afterward.
+
+## Map-resolution cache and runtime cost
+
+Catalog names are resolved/validated once, and display names are formatted from
+the canonical names exactly as SourceMod does (strip folder and `.ugc` suffix).
+Consumers obtain cached labels through `NativeVotes_GetCatalogMapDisplayName`.
+Unknown admin/external maps still use ordinary engine resolution. Random pools
+and nomination browsing do not repeatedly resolve already validated names.
+
+Explicit refresh checks positive cache entries against BSP size/mtime. New,
+changed, removed and uncacheable maps go back through engine validation; failed
+resolutions are not cached. The validation cache resets on map start. Metadata
+normally uses inexpensive filesystem stat, not Valve's costly Size lookup.
+Workshop canonical names are mapped to their physical
+`../steamapps/workshop/content/<appid>/<id>/<map>.bsp` for fingerprints, using
+the app ID from gameinfo.txt. Packed/search-path-only BSPs retain Valve-FS
+fallback. No live instance paths are hardcoded.
+
+The first validation after map/plugin load still has a cold-cache cost. An
+explicit refresh that introduces many new/changed BSPs must also validate them;
+ordinary unchanged refreshes avoid the large repeated engine scan.
+
+Before this change, an isolated 377-map MGE benchmark measured 102–119 ms for
+vote preparation and 170–183 ms for refresh preparation (1,577 / 2,708 engine
+resolutions). The optimized private snapshot measured 0.064–0.180 ms for vote
+preparation with zero engine resolutions, and 5.6–5.8 ms for warm refreshes
+with three uncached/alias resolutions. Cold initialization was about 32 ms.
+These are isolated preparation measurements, not client vote-UI/network time.
+
 `configs/mapeval.cfg` is primary. Missing, invalid, nested legacy-tier, or empty
 primary configuration falls back to the current `mapcyclefile` (normally
 `cfg/mapcycle.txt`). Fallback does not scan all installed maps. If neither source
@@ -97,7 +130,7 @@ Load the isolated probe on MGE and run `sm_nativevotes_catalog_probe`. Its
 private fixture files test missing/invalid primary fallback, zero-only pools,
 ratings/bonuses, shared snapshots, menu pagination, and production Random 50.
 It never modifies production configuration or changes maps. Expected:
-`checks=197 failures=0`. The malformed-file case uses a private fixture, not the
+`checks=211 failures=0`. The malformed-file case uses a private fixture, not the
 live file. The case regressions reparse lowercase, uppercase, and mixed-case
 category names within one process.
 
@@ -106,3 +139,24 @@ natives and every category/Popular menu using real SourceMod Menu objects,
 including pagination and existing `!nr` selection. It does not open menus on
 humans, cast votes, or change maps. Human-visible menu rendering still warrants
 a normal `!nominate` check. Unload both temporary probe SMXs afterward.
+
+The regression probe also tests no re-resolution for cached display names or
+random pools, changed-size and changed-mtime invalidation, deleted maps,
+Workshop fingerprint paths, and exactly one consumer rebuild on refresh.
+
+For repeatable bounded timings on **empty MGE only**:
+
+```bash
+bash tests/build_catalog_probe.sh "$HOME/hlserver/tf2/tf/addons/sourcemod/scripting" \
+  /tmp/nativevotes_catalog_cost_probe.smx catalog_cost_probe.sp
+```
+
+Load that temporary plugin, run `sm_nativevotes_catalog_cost`, then unload it.
+It refuses/aborts if a human is connected. Three private snapshots (one cold,
+two warm) execute the actual parser and nomination builders, create only
+private Menu objects, and count engine-resolution calls. The probe never
+dispatches the live catalog forward, starts a vote, or changes a map. Results
+are written under `data/nativevotes_catalog_cost_<port>.txt`; delete the result
+after recording it. Use SourceMod Profiler timings, not coarse GetSysTickCount.
+The live probe additionally offers `sm_nativevotes_catalog_refresh_cost` for
+an empty-server-only measurement of the actual shared reload/consumer path.

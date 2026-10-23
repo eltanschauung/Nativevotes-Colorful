@@ -3,6 +3,7 @@
 #include <sourcemod>
 #include <mapchooser>
 #include <nativevotes>
+#include <profiler>
 #include "nativevotes_catalog_api.inc"
 
 public Plugin myinfo={name="NativeVotes live catalog verification",author="Hombre",version="1.0"};
@@ -10,6 +11,7 @@ ArrayList g_MapList,g_RandomNominationList;
 StringMap g_MapTrie;
 #define RANDOM_NOMINATION_MENU_SIZE 50
 int checks,failures;
+int catalogReloads;
 
 public APLRes AskPluginLoad2(Handle plugin,bool late,char[] error,int length)
 {
@@ -17,6 +19,7 @@ public APLRes AskPluginLoad2(Handle plugin,bool late,char[] error,int length)
     MarkNativeAsOptional("NativeVotes_CopyMapCatalog");
     MarkNativeAsOptional("NativeVotes_CopyMapCategories");
     MarkNativeAsOptional("NativeVotes_GetMapCatalogSource");
+    MarkNativeAsOptional("NativeVotes_GetCatalogMapDisplayName");
     return APLRes_Success;
 }
 public int MenuHandler_CategorySelect(Menu menu,MenuAction action,int client,int item){return 0;}
@@ -37,6 +40,18 @@ public void OnPluginStart()
     g_MapTrie=new StringMap();
     RegAdminCmd("sm_nativevotes_catalog_live_probe",RunLive,ADMFLAG_ROOT);
     RegAdminCmd("sm_nativevotes_catalog_vote_state",VoteState,ADMFLAG_ROOT);
+    RegAdminCmd("sm_nativevotes_catalog_refresh_cost",RefreshCost,ADMFLAG_ROOT);
+}
+
+public void NativeVotes_OnMapCatalogReloaded(){catalogReloads++;}
+public Action RefreshCost(int client,int args)
+{
+    for(int target=1;target<=MaxClients;target++)
+        if(IsClientConnected(target)&&!IsFakeClient(target))return Plugin_Handled;
+    int before=catalogReloads;Profiler profile=new Profiler();profile.Start();
+    bool ok=NativeVotes_ReloadMapCatalog();profile.Stop();
+    PrintToServer("[MapCatalogLiveRefresh] ok=%d forwards=%d elapsed_ms=%.3f",ok,catalogReloads-before,profile.Time*1000.0);
+    delete profile;return Plugin_Handled;
 }
 
 public Action VoteState(int client,int args)
@@ -81,6 +96,10 @@ public Action RunLive(int client,int args)
         {
             maps.GetString(j,map,sizeof(map));menu.GetItem(j,key,sizeof(key));
             Check(StrEqual(map,key)&&IsMapValid(map),"menu map order and validity");
+            char cached[PLATFORM_MAX_PATH],expected[PLATFORM_MAX_PATH];
+            Check(NativeVotes_GetCatalogMapDisplayName(map,cached,sizeof(cached)),"published catalog includes cached display name");
+            GetMapDisplayName(map,expected,sizeof(expected));
+            Check(StrEqual(cached,expected),"cached display name matches SourceMod for ordinary and Workshop maps");
         }
         delete menu;delete maps;
     }

@@ -64,7 +64,7 @@ public Plugin myinfo =
 	name = "NativeVotes | MapChooser",
 	author = "AlliedModders LLC and Powerlord",
 	description = "Automated Map Voting",
-	version = "26w43b",
+	version = "26w43c",
 	url = "https://github.com/Heapons/sourcemod-nativevotes-updated/"
 };
 
@@ -381,6 +381,12 @@ public void OnConfigsExecuted()
 	}
 }
 
+public void OnMapStart()
+{
+	Catalog_ResetMapValidationCache();
+	g_CatalogAttempted = false;
+}
+
 public void OnMapEnd()
 {
 	g_HasVoteStarted = false;
@@ -445,7 +451,7 @@ public Action Command_SetNextMap(int client, int args)
 		return Plugin_Handled;
 	}
 	
-	GetMapDisplayName(displayName, displayName, sizeof(displayName));
+	Catalog_GetMapDisplayName(displayName, displayName, sizeof(displayName));
 	Format(displayName, sizeof(displayName), "\x05%s\x01", displayName);
 	
 	CShowActivity(client, "%t", "Changed Next Map", displayName);
@@ -804,8 +810,13 @@ void InitiateVote(MapChange when, ArrayList inputlist=null)
 		return;
 	}
 	
-	// Apply current file edits before constructing the vote and its weight cache.
-	LoadMapEvalConfig();
+	// Runtime votes use the published catalog; only map start/explicit refresh
+	// reparses files and rebuilds nomination consumers.
+	if (!Catalog_EnsureLoaded())
+	{
+		g_WaitingForVote = false;
+		return;
+	}
 	CreateNextVote();
 	g_ChangeTime = when;
 	
@@ -867,7 +878,7 @@ void InitiateVote(MapChange when, ArrayList inputlist=null)
 		{
 			char displayName[PLATFORM_MAX_PATH];
 			g_NominateList.GetString(i, map, sizeof(map));
-			GetMapDisplayName(map, displayName, sizeof(displayName));
+			Catalog_GetMapDisplayName(map, displayName, sizeof(displayName));
 			
 			if (g_NativeVotes)
 			{
@@ -919,7 +930,7 @@ void InitiateVote(MapChange when, ArrayList inputlist=null)
 			
 			/* Insert the map and increment our count */
 			char displayName[PLATFORM_MAX_PATH];
-			GetMapDisplayName(map, displayName, sizeof(displayName));
+			Catalog_GetMapDisplayName(map, displayName, sizeof(displayName));
 			if (g_NativeVotes)
 			{
 				g_VoteNative.AddItem(map, displayName);
@@ -946,7 +957,7 @@ void InitiateVote(MapChange when, ArrayList inputlist=null)
 			if (IsMapValid(map))
 			{
 				char displayName[PLATFORM_MAX_PATH];
-				GetMapDisplayName(map, displayName, sizeof(displayName));
+				Catalog_GetMapDisplayName(map, displayName, sizeof(displayName));
 				if (g_NativeVotes)
 				{
 					g_VoteNative.AddItem(map, displayName);
