@@ -8,6 +8,7 @@ ConVar g_ConVars[1], probeCycle;
 ArrayList g_MapList, g_NextMapList, g_RandomNominationList;
 StringMap g_MapTrie;
 char g_CurrentMap[PLATFORM_MAX_PATH], excluded[64];
+char probePrimaryAbsolute[PLATFORM_MAX_PATH];
 bool g_HasVoteStarted, g_WaitingForVote;
 int checks, failures;
 #define RANDOM_NOMINATION_MENU_SIZE 50
@@ -18,7 +19,7 @@ int ProbeBuildPath(PathType type, char[] buffer, int maxlen, const char[] format
 {
     #pragma unused type
     #pragma unused format
-    strcopy(buffer, maxlen, PRIMARY);
+    strcopy(buffer, maxlen, probePrimaryAbsolute);
     return strlen(buffer);
 }
 ConVar ProbeFindConVar(const char[] name) { return StrEqual(name,"mapcyclefile") ? probeCycle : null; }
@@ -78,25 +79,52 @@ void Check(bool ok,const char[] label)
     checks++;
     if(!ok){failures++;PrintToServer("[MapCatalogProbe] FAIL: %s",label);}
 }
+void WriteSection(File file, const char[] name)
+{
+    file.WriteLine("\"%s\"", name);
+    file.WriteLine("{");
+}
+void WriteEntry(File file, const char[] name, const char[] value)
+{
+    file.WriteLine("\"%s\" \"%s\"", name, value);
+}
 void WritePrimary(int mode=0)
 {
     File f=OpenFile(PRIMARY,"w");
-    f.WriteLine("\"mapEval\" {");
-    if(mode==1) f.WriteLine("\"popular maps\" { \"level3\" \"\" }");
-    else if(mode==2) f.WriteLine("\"koth\" { \"zero\" \"0\" }");
-    else if(mode==3) f.WriteLine("\"koth\" { \"legacy_tier\" { \"zero\" \"1\" } }");
-    else if(mode==4) f.WriteLine("\"koth\" {");
+    WriteSection(f,"mapEval");
+    if(mode==1)
+    {
+        WriteSection(f,"popular maps");WriteEntry(f,"level3","");f.WriteLine("}");
+    }
+    else if(mode==2)
+    {
+        WriteSection(f,"koth");WriteEntry(f,"zero","0");f.WriteLine("}");
+    }
+    else if(mode==3)
+    {
+        WriteSection(f,"koth");WriteSection(f,"legacy_tier");
+        WriteEntry(f,"zero","1");f.WriteLine("}");f.WriteLine("}");
+    }
+    else if(mode==4) WriteSection(f,"koth");
+    else if(mode==5 || mode==6)
+    {
+        WriteSection(f,mode==5?"KOTH":"kOtH");WriteEntry(f,"level1","1");f.WriteLine("}");
+        WriteSection(f,mode==5?"CTF":"cTf");WriteEntry(f,"level2","2");f.WriteLine("}");
+    }
     else
     {
-        f.WriteLine("\"koth\" { \"zero\" \"0\" \"level1\" \"1\" \"unset\" \"\" }");
-        f.WriteLine("\"control points\" { \"level2\" \"2\" \"level3\" \"3\" \"missing_map\" \"3\" }");
-        f.WriteLine("\"popular maps\" { \"zero\" \"999\" \"level3\" \"0\" }");
+        WriteSection(f,"koth");
+        WriteEntry(f,"zero","0");WriteEntry(f,"level1","1");WriteEntry(f,"unset","");f.WriteLine("}");
+        WriteSection(f,"control points");
+        WriteEntry(f,"level2","2");WriteEntry(f,"level3","3");WriteEntry(f,"missing_map","3");f.WriteLine("}");
+        WriteSection(f,"popular maps");WriteEntry(f,"zero","999");WriteEntry(f,"level3","0");f.WriteLine("}");
     }
     f.WriteLine("}");delete f;
 }
 
 public void OnPluginStart()
 {
+    BuildPath(Path_SM,probePrimaryAbsolute,sizeof(probePrimaryAbsolute),"data/nativevotes_catalog_probe_primary.cfg");
     g_MapList=new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
     g_NextMapList=new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
     g_RandomNominationList=new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
@@ -142,11 +170,16 @@ public Action RunProbe(int client,int args)
     Menu root=BuildNominationCategoryMenu();char key[64];root.GetItem(0,key,sizeof(key));Check(StrEqual(key,"popular maps"),"Popular first");
     root.GetItem(1,key,sizeof(key));Check(StrEqual(key,"@random"),"Random 50 second");
     char label[128];int style;
+    root.GetTitle(label,sizeof(label));Check(StrEqual(label,"Nominate a map"),"root title has no Categories suffix");
     root.GetItem(2,key,sizeof(key),style,label,sizeof(label));
     Check(StrEqual(label,"koth"),"category capitalization comes directly from config");delete root;
     Menu categoryMenu=BuildCategoryNominationMenu("control points");
-    categoryMenu.GetTitle(label,sizeof(label));
-    Check(StrEqual(label,"Nominate: control points"),"submenu title preserves config capitalization");delete categoryMenu;
+    Check(categoryMenu!=null,"category retains exact file spelling for lookup");
+    if(categoryMenu!=null)
+    {
+        categoryMenu.GetTitle(label,sizeof(label));
+        Check(StrEqual(label,"Nominate: control points"),"submenu title preserves config capitalization");delete categoryMenu;
+    }
     Menu popular=BuildCategoryNominationMenu("popular maps");popular.GetItem(0,key,sizeof(key));Check(StrEqual(key,"zero"),"popular order includes level 0");delete popular;
     for(int c=0;c<9;c++)
     {
@@ -176,6 +209,11 @@ public Action RunProbe(int client,int args)
     WritePrimary(4);Check(LoadMapEvalConfig() && !g_CatalogPrimary,"syntactically malformed catalog falls back");
     WritePrimary(2);Check(LoadMapEvalConfig() && g_CatalogPrimary,"all-zero primary remains valid");
     CreateNextVote();Check(g_NextMapList.Length==0 && !CopyRandomMapEvalMap(map,sizeof(map)),"no fallback to level zero for automatic votes or empty changes");
+    WritePrimary(5);LoadMapEvalConfig();
+    char first[64],second[64];g_CatalogCategories.GetString(0,first,sizeof(first));g_CatalogCategories.GetString(1,second,sizeof(second));
+    Check(StrEqual(first,"KOTH") && StrEqual(second,"CTF"),"case-only refresh preserves uppercase config names after lowercase names were interned");
+    WritePrimary(6);LoadMapEvalConfig();g_CatalogCategories.GetString(0,first,sizeof(first));g_CatalogCategories.GetString(1,second,sizeof(second));
+    Check(StrEqual(first,"kOtH") && StrEqual(second,"cTf"),"second case-only refresh preserves mixed-case config names");
     WritePrimary();Check(LoadMapEvalConfig() && g_CatalogPopular.Length==2 && GetMapEvalLevel("level3")==3,"refresh restores levels/categories/popular together");
     delete pool;
     File out=OpenFile("addons/sourcemod/data/nativevotes_catalog_probe_result.txt","w");out.WriteLine("checks=%d failures=%d",checks,failures);delete out;

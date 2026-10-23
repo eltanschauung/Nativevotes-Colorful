@@ -3,6 +3,8 @@
 #endif
 #define _nativevotes_mapeval_included
 
+#include <textparse>
+
 #define MAP_EVAL_CONFIG_FILE "configs/mapeval.cfg"
 #define MAP_EVAL_DEFAULT_VOTE_WEIGHT 1
 #define MAP_EVAL_MAX_VOTE_WEIGHT 3
@@ -12,6 +14,9 @@ ArrayList g_CatalogMaps, g_CatalogCategories, g_CatalogPopular;
 StringMap g_CatalogGroups, g_MapEvalVoteWeights;
 GlobalForward g_CatalogReloaded;
 bool g_CatalogPrimary, g_CatalogLoaded, g_CatalogAttempted;
+int g_CatalogParseDepth;
+bool g_CatalogParseValid, g_CatalogSawRoot, g_CatalogSawPopular, g_CatalogParsingPopular;
+ArrayList g_CatalogParsingGroup;
 
 void MapEval_Init()
 {
@@ -96,73 +101,31 @@ bool Catalog_LoadPrimary()
     BuildPath(Path_SM, path, sizeof(path), MAP_EVAL_CONFIG_FILE);
     if (!FileExists(path))
         return false;
-    KeyValues kv = new KeyValues("mapEval");
-    if (!kv.ImportFromFile(path))
+
+    // Valve KeyValues interns key names case-insensitively and may return the
+    // spelling first seen during this process. SMC reports the original text,
+    // so a case-only configuration edit takes effect without a server restart.
+    g_CatalogParseDepth = 0;
+    g_CatalogParseValid = true;
+    g_CatalogSawRoot = false;
+    g_CatalogSawPopular = false;
+    g_CatalogParsingPopular = false;
+    g_CatalogParsingGroup = null;
+    SMCParser parser = new SMCParser();
+    parser.OnEnterSection = Catalog_ParseSection;
+    parser.OnKeyValue = Catalog_ParseEntry;
+    parser.OnLeaveSection = Catalog_ParseLeave;
+    SMCError error = parser.ParseFile(path);
+    if (error != SMCError_Okay)
     {
-        delete kv;
-        return false;
+        char message[192];
+        parser.GetErrorString(error, message, sizeof(message));
+        LogMessage("[MapCatalog] Unable to parse %s: %s", MAP_EVAL_CONFIG_FILE, message);
     }
-    char rootName[64];
-    kv.GetSectionName(rootName, sizeof(rootName));
-    if (!StrEqual(rootName, "mapEval", false) || !kv.GotoFirstSubKey())
-    {
-        delete kv;
-        return false;
-    }
-    bool valid = true;
-    do
-    {
-        char category[64];
-        kv.GetSectionName(category, sizeof(category));
-        if (StrEqual(category, MAP_EVAL_POPULAR, false))
-        {
-            if (kv.GotoFirstSubKey(false))
-            {
-                do
-                {
-                    char map[PLATFORM_MAX_PATH], resolved[PLATFORM_MAX_PATH];
-                    kv.GetSectionName(map, sizeof(map));
-                    if (FindMap(map, resolved, sizeof(resolved)) != FindMap_NotFound
-                        && g_CatalogPopular.FindString(resolved) == -1)
-                        g_CatalogPopular.PushString(resolved);
-                } while (kv.GotoNextKey(false));
-                kv.GoBack();
-            }
-            continue;
-        }
-        int duplicate;
-        if (!category[0] || g_CatalogGroups.GetValue(category, duplicate))
-        {
-            valid = false;
-            break;
-        }
-        ArrayList maps = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
-        g_CatalogGroups.SetValue(category, view_as<int>(maps));
-        g_CatalogCategories.PushString(category);
-        if (kv.GotoFirstSubKey(false))
-        {
-            do
-            {
-                char map[PLATFORM_MAX_PATH], rawLevel[32];
-                kv.GetSectionName(map, sizeof(map));
-                if (kv.GotoFirstSubKey(false))
-                {
-                    kv.GoBack();
-                    valid = false;
-                    break;
-                }
-                kv.GetString(NULL_STRING, rawLevel, sizeof(rawLevel), "");
-                if (!Catalog_AddMap(map, maps, rawLevel))
-                {
-                    valid = false;
-                    break;
-                }
-            } while (kv.GotoNextKey(false));
-            kv.GoBack();
-        }
-        if (!valid) break;
-    } while (kv.GotoNextKey());
-    delete kv;
+    delete parser;
+    bool valid = error == SMCError_Okay && g_CatalogParseValid
+        && g_CatalogSawRoot && g_CatalogParseDepth == 0;
+
     // Popular is an ordered view of the same catalog, never a second map source.
     char map[PLATFORM_MAX_PATH];
     for (int i = g_CatalogPopular.Length - 1; i >= 0; i--)
@@ -173,6 +136,94 @@ bool Catalog_LoadPrimary()
             g_CatalogPopular.Erase(i);
     }
     return valid && g_CatalogMaps.Length > 0;
+}
+
+public SMCResult Catalog_ParseSection(SMCParser parser, const char[] section, bool quoted)
+{
+    if (g_CatalogParseDepth == 0)
+    {
+        if (g_CatalogSawRoot || !StrEqual(section, "mapEval", false))
+        {
+            g_CatalogParseValid = false;
+            return SMCParse_HaltFail;
+        }
+        g_CatalogSawRoot = true;
+    }
+    else if (g_CatalogParseDepth == 1)
+    {
+        if (!section[0] || strlen(section) >= 64)
+        {
+            g_CatalogParseValid = false;
+            return SMCParse_HaltFail;
+        }
+        g_CatalogParsingPopular = StrEqual(section, MAP_EVAL_POPULAR, false);
+        if (g_CatalogParsingPopular)
+        {
+            if (g_CatalogSawPopular)
+            {
+                g_CatalogParseValid = false;
+                return SMCParse_HaltFail;
+            }
+            g_CatalogSawPopular = true;
+        }
+        else
+        {
+            char previous[64];
+            for (int i = 0; i < g_CatalogCategories.Length; i++)
+            {
+                g_CatalogCategories.GetString(i, previous, sizeof(previous));
+                if (StrEqual(previous, section, false))
+                {
+                    g_CatalogParseValid = false;
+                    return SMCParse_HaltFail;
+                }
+            }
+            g_CatalogParsingGroup = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
+            g_CatalogGroups.SetValue(section, view_as<int>(g_CatalogParsingGroup));
+            g_CatalogCategories.PushString(section);
+        }
+    }
+    else
+    {
+        g_CatalogParseValid = false;
+        return SMCParse_HaltFail;
+    }
+    g_CatalogParseDepth++;
+    return SMCParse_Continue;
+}
+
+public SMCResult Catalog_ParseEntry(SMCParser parser, const char[] map, const char[] value,
+    bool keyQuoted, bool valueQuoted)
+{
+    if (g_CatalogParseDepth != 2 || !map[0] || strlen(map) >= PLATFORM_MAX_PATH)
+    {
+        g_CatalogParseValid = false;
+        return SMCParse_HaltFail;
+    }
+    if (g_CatalogParsingPopular)
+    {
+        char resolved[PLATFORM_MAX_PATH];
+        if (FindMap(map, resolved, sizeof(resolved)) != FindMap_NotFound
+            && g_CatalogPopular.FindString(resolved) == -1)
+            g_CatalogPopular.PushString(resolved);
+    }
+    else if (!Catalog_AddMap(map, g_CatalogParsingGroup, value))
+    {
+        g_CatalogParseValid = false;
+        return SMCParse_HaltFail;
+    }
+    return SMCParse_Continue;
+}
+
+public SMCResult Catalog_ParseLeave(SMCParser parser)
+{
+    g_CatalogParseDepth--;
+    if (g_CatalogParseDepth == 1)
+    {
+        g_CatalogParsingGroup = null;
+        g_CatalogParsingPopular = false;
+    }
+    return SMCParse_Continue;
 }
 
 bool Catalog_LoadFallback()

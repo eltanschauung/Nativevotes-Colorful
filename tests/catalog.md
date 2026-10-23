@@ -26,11 +26,17 @@ and no bonus. Current/recent-map exclusions, nomination ownership, and client
 vote weights remain independent of MapEval levels. Higher levels do not gain
 extra probability in random selection.
 
-The root nomination menu starts with Popular and Random 50, followed by the
+The root title is `Nominate a map`. The menu starts with Popular and Random 50, followed by the
 nonempty gamemode groups in configuration order. All menus paginate; category
 submenus offer Back. The existing `!nr` and Random 50 invoke the same function.
 These are nomination browsers, so they can show all levels; automatic vote and
 empty-server selection are the paths restricted to level >= 1.
+
+Category names retain the spelling in the file, including case-only edits on
+refresh. The runtime parser is SourceMod SMC, not Valve KeyValues: Valve's
+case-insensitive key-name symbol pool can return the first spelling seen by the
+process rather than the latest configuration text. No hardcoded capitalization
+or title-casing overrides are applied.
 
 `popular maps` is an ordered view, not a gamemode or a second source of ratings.
 Use valid KeyValues entries such as `"cp_example" ""`; bare single strings are
@@ -91,8 +97,9 @@ Load the isolated probe on MGE and run `sm_nativevotes_catalog_probe`. Its
 private fixture files test missing/invalid primary fallback, zero-only pools,
 ratings/bonuses, shared snapshots, menu pagination, and production Random 50.
 It never modifies production configuration or changes maps. Expected:
-`checks=193 failures=0`. The malformed-file case intentionally generates an
-engine KeyValues parse diagnostic for the private fixture, not the live file.
+`checks=197 failures=0`. The malformed-file case uses a private fixture, not the
+live file. The case regressions reparse lowercase, uppercase, and mixed-case
+category names within one process.
 
 After deployment, `sm_nativevotes_catalog_live_probe` verifies the actual shared
 natives and every category/Popular menu using real SourceMod Menu objects,

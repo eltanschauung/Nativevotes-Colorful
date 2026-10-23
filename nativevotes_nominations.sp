@@ -57,7 +57,7 @@ public Plugin myinfo =
 	name = "NativeVotes | Map Nominations",
 	author = "AlliedModders LLC and Powerlord",
 	description = "Provides Map Nominations",
-	version = "26w43b",
+	version = "26w43c",
 	url = "https://github.com/Heapons/sourcemod-nativevotes-updated/"
 };
 
@@ -955,7 +955,7 @@ void OpenNominationMenu(int client)
 Menu BuildNominationCategoryMenu()
 {
 	Menu menu = new Menu(MenuHandler_CategorySelect);
-	menu.SetTitle("Nominate a map: Categories");
+	menu.SetTitle("Nominate a map");
 	menu.AddItem("popular maps", "Popular");
 	menu.AddItem("@random", "Random 50");
 	ArrayList categories = new ArrayList(ByteCountToCells(64));

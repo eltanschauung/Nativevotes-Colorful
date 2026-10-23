@@ -64,7 +64,7 @@ public Plugin myinfo =
 	name = "NativeVotes | MapChooser",
 	author = "AlliedModders LLC and Powerlord",
 	description = "Automated Map Voting",
-	version = "26w43a",
+	version = "26w43b",
 	url = "https://github.com/Heapons/sourcemod-nativevotes-updated/"
 };
 

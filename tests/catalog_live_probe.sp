@@ -60,7 +60,15 @@ public Action RunLive(int client,int args)
     char map[PLATFORM_MAX_PATH],category[64],key[PLATFORM_MAX_PATH];
     root.GetItem(0,key,sizeof(key));Check(StrEqual(key,"popular maps"),"Popular first");
     root.GetItem(1,key,sizeof(key));Check(StrEqual(key,"@random"),"Random 50 second");
-    Check(root.Pagination>0&&root.Pagination<root.ItemCount,"category root paginates");delete root;
+    Check(root.Pagination>0&&root.Pagination<root.ItemCount,"category root paginates");
+    char label[128];int style;
+    root.GetTitle(label,sizeof(label));Check(StrEqual(label,"Nominate a map"),"root title");
+    for(int i=0;i<categories.Length;i++)
+    {
+        categories.GetString(i,category,sizeof(category));root.GetItem(i+2,key,sizeof(key),style,label,sizeof(label));
+        Check(StrEqual(category,label),"root label preserves catalog spelling");
+    }
+    delete root;
     for(int i=0;i<categories.Length;i++)
     {
         categories.GetString(i,category,sizeof(category));
@@ -101,7 +109,9 @@ public Action RunLive(int client,int args)
     }
     int port=FindConVar("hostport").IntValue;char path[PLATFORM_MAX_PATH];
     FormatEx(path,sizeof(path),"addons/sourcemod/data/nativevotes_catalog_live_probe_%d.txt",port);
-    File f=OpenFile(path,"w");f.WriteLine("checks=%d failures=%d maps=%d categories=%d popular=%d",checks,failures,g_MapList.Length,categories.Length,popular.Length);delete f;
+    File f=OpenFile(path,"w");f.WriteLine("checks=%d failures=%d maps=%d categories=%d popular=%d",checks,failures,g_MapList.Length,categories.Length,popular.Length);
+    for(int i=0;i<categories.Length;i++){categories.GetString(i,category,sizeof(category));f.WriteLine("category=%s",category);}
+    delete f;
     PrintToServer("[MapCatalogLiveProbe] checks=%d failures=%d maps=%d categories=%d popular=%d",checks,failures,g_MapList.Length,categories.Length,popular.Length);
     delete seen;delete excluded;delete popular;delete categories;
     return Plugin_Handled;
