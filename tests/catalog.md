@@ -91,7 +91,7 @@ Load the isolated probe on MGE and run `sm_nativevotes_catalog_probe`. Its
 private fixture files test missing/invalid primary fallback, zero-only pools,
 ratings/bonuses, shared snapshots, menu pagination, and production Random 50.
 It never modifies production configuration or changes maps. Expected:
-`checks=191 failures=0`. The malformed-file case intentionally generates an
+`checks=193 failures=0`. The malformed-file case intentionally generates an
 engine KeyValues parse diagnostic for the private fixture, not the live file.
 
 After deployment, `sm_nativevotes_catalog_live_probe` verifies the actual shared

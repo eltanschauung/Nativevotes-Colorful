@@ -57,7 +57,7 @@ public Plugin myinfo =
 	name = "NativeVotes | Map Nominations",
 	author = "AlliedModders LLC and Powerlord",
 	description = "Provides Map Nominations",
-	version = "26w43a",
+	version = "26w43b",
 	url = "https://github.com/Heapons/sourcemod-nativevotes-updated/"
 };
 
@@ -960,25 +960,14 @@ Menu BuildNominationCategoryMenu()
 	menu.AddItem("@random", "Random 50");
 	ArrayList categories = new ArrayList(ByteCountToCells(64));
 	NativeVotes_CopyMapCategories(categories);
-	char category[64], label[64];
+	char category[64];
 	for (int i = 0; i < categories.Length; i++)
 	{
 		categories.GetString(i, category, sizeof(category));
-		GetCategoryLabel(category, label, sizeof(label));
-		menu.AddItem(category, label);
+		menu.AddItem(category, category);
 	}
 	delete categories;
 	return menu;
-}
-
-void GetCategoryLabel(const char[] category, char[] label, int maxlen)
-{
-	if (StrEqual(category, "koth", false)) strcopy(label, maxlen, "KOTH");
-	else if (StrEqual(category, "payload", false)) strcopy(label, maxlen, "Payload");
-	else if (StrEqual(category, "control points", false)) strcopy(label, maxlen, "Control Points");
-	else if (StrEqual(category, "attack/defend", false)) strcopy(label, maxlen, "Attack/Defend");
-	else if (StrEqual(category, "popular maps", false)) strcopy(label, maxlen, "Popular");
-	else strcopy(label, maxlen, category);
 }
 
 public int MenuHandler_CategorySelect(Menu menu, MenuAction action, int client, int item)
@@ -1018,9 +1007,8 @@ Menu BuildCategoryNominationMenu(const char[] category)
 		return null;
 	}
 	Menu menu = new Menu(MenuHandler_MapSelect, MENU_ACTIONS_DEFAULT|MenuAction_DrawItem|MenuAction_DisplayItem);
-	char label[64], map[PLATFORM_MAX_PATH], displayName[PLATFORM_MAX_PATH];
-	GetCategoryLabel(category, label, sizeof(label));
-	menu.SetTitle("Nominate: %s", label);
+	char map[PLATFORM_MAX_PATH], displayName[PLATFORM_MAX_PATH];
+	menu.SetTitle("Nominate: %s", category);
 	menu.ExitBackButton = true;
 	for (int i = 0; i < maps.Length; i++)
 	{

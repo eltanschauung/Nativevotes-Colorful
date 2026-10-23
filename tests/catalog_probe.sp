@@ -140,7 +140,13 @@ public Action RunProbe(int client,int args)
     g_NextMapList.GetString(0,map,sizeof(map));Check(g_NextMapList.FindString(map)==0,"vote picks have no duplicate first entry");
 
     Menu root=BuildNominationCategoryMenu();char key[64];root.GetItem(0,key,sizeof(key));Check(StrEqual(key,"popular maps"),"Popular first");
-    root.GetItem(1,key,sizeof(key));Check(StrEqual(key,"@random"),"Random 50 second");delete root;
+    root.GetItem(1,key,sizeof(key));Check(StrEqual(key,"@random"),"Random 50 second");
+    char label[128];int style;
+    root.GetItem(2,key,sizeof(key),style,label,sizeof(label));
+    Check(StrEqual(label,"koth"),"category capitalization comes directly from config");delete root;
+    Menu categoryMenu=BuildCategoryNominationMenu("control points");
+    categoryMenu.GetTitle(label,sizeof(label));
+    Check(StrEqual(label,"Nominate: control points"),"submenu title preserves config capitalization");delete categoryMenu;
     Menu popular=BuildCategoryNominationMenu("popular maps");popular.GetItem(0,key,sizeof(key));Check(StrEqual(key,"zero"),"popular order includes level 0");delete popular;
     for(int c=0;c<9;c++)
     {
