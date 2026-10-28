@@ -211,6 +211,8 @@ public void OnPluginStart()
 
 	RegAdminCmd("sm_mapvote", Command_MapVote, ADMFLAG_CHANGEMAP, "Forces MapChooser to attempt to run a map vote now.");
 	RegAdminCmd("sm_setnextmap", Command_SetNextMap, ADMFLAG_CHANGEMAP, "sm_setnextmap <map>");
+	RegAdminCmd("sm_extend", Command_ExtendMapRegistration, ADMFLAG_CHANGEMAP, "sm_extend - Extend the map by 15 minutes and 3 rounds.");
+	AddCommandListener(Listener_ExtendMap, "sm_extend");
 	HookConVarChange(g_ConVars[nativevotes_emptymapchange], ConVarChanged_EmptyMapChange);
 	HookConVarChange(g_ConVars[mapvote_exclude], ConVarChanged_MapVoteExclude);
 	RecentMapHistory_Init();
@@ -472,6 +474,44 @@ void SetAutomaticNextMap(const char[] map)
 	Call_StartForward(g_AutomaticNextMapForward);
 	Call_PushCell(false);
 	Call_Finish();
+}
+
+// Whalescramble also owns sm_extend <seconds> for the round timer. Intercept
+// only the no-argument form before either plugin's command handler runs.
+public Action Listener_ExtendMap(int client, const char[] command, int argc)
+{
+	if (argc != 0)
+		return Plugin_Continue;
+
+	if (client != 0 && !CheckCommandAccess(client, "sm_extend", ADMFLAG_CHANGEMAP))
+	{
+		ReplyToCommand(client, "[MapChooser] You do not have access to this command.");
+		return Plugin_Handled;
+	}
+
+	ConVar timeLimit = FindConVar("mp_timelimit");
+	ConVar maxRounds = g_ConVars[mp_maxrounds];
+	if (timeLimit == null || maxRounds == null)
+	{
+		ReplyToCommand(client, "[MapChooser] Could not find the map limit convars.");
+		return Plugin_Handled;
+	}
+
+	maxRounds.IntValue += 3;
+	// Changing the time limit can immediately reschedule the end-map vote.
+	// Update the round limit first so that callback sees both new limits.
+	timeLimit.FloatValue += 15.0;
+	CPrintToChatAll("[{lightgreen}MapChooser{default}] The map was extended by 15 minutes and 3 rounds.");
+	LogAction(client, -1, "Extended the map by 15 minutes and 3 rounds (mp_timelimit %.1f, mp_maxrounds %d).", timeLimit.FloatValue, maxRounds.IntValue);
+	ReplyToCommand(client, "[MapChooser] mp_timelimit is now %.1f; mp_maxrounds is now %d.", timeLimit.FloatValue, maxRounds.IntValue);
+	return Plugin_Handled;
+}
+
+// The listener implements the no-argument form; leave argument-bearing calls
+// available to Whalescramble's existing round-timer command.
+public Action Command_ExtendMapRegistration(int client, int args)
+{
+	return Plugin_Continue;
 }
 
 public void OnMapTimeLeftChanged()
