@@ -40,6 +40,7 @@
 #undef REQUIRE_PLUGIN
 #include <nativevotes>
 #include <plugin_statistics>
+#include <basecomm>
 #define REQUIRE_PLUGIN
 
 #include "nativevotes_statistics.inc"
@@ -65,6 +66,7 @@ public APLRes AskPluginLoad2(Handle myself, bool late, char[] error, int err_max
 {
 	MarkNativeAsOptional("Filters_GetChatName");
 	MarkNativeAsOptional("NativeVotes_GetRTVProgress");
+	MarkNativeAsOptional("BaseComm_IsClientGagged");
 	return APLRes_Success;
 }
 
@@ -115,6 +117,8 @@ Handle g_hRandomNominateTimer[MAXPLAYERS + 1];
 int g_iRandomNominateUserId[MAXPLAYERS + 1];
 char g_szRandomNominateMap[MAXPLAYERS + 1][PLATFORM_MAX_PATH];
 
+#include "nativevotes_nextmap.inc"
+
 public void OnPluginStart()
 {
 	LoadTranslations("common.phrases");
@@ -124,6 +128,7 @@ public void OnPluginStart()
 	g_NextMapConVar = FindConVar("sm_nextmap");
 	if (g_NextMapConVar != null)
 		g_NextMapConVar.AddChangeHook(ConVarChanged_NextMap);
+	NativeVotes_NextMapInit();
 	
 	g_MapList = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));
 	g_RandomNominationList = new ArrayList(ByteCountToCells(PLATFORM_MAX_PATH));

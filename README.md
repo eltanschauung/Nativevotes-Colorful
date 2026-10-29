@@ -19,6 +19,20 @@ Credit to Powerlord and all related parties: https://github.com/Heapons/sourcemo
 
 See [kogasa.tf](https://kogasa.tf)
 
+## Next-map ownership
+
+Map Nominations owns the `nextmap` console command, `!nextmap` and `/nextmap`
+chat triggers, and the exact bare `nextmap` alias in both public/team chat.
+The bare alias uses a `say` listener rather than the chat post-forward, while
+Filters remains responsible for rendering the original message. Gagged clients
+cannot use the bare alias. `sm_trigger_show` retains its private/public behavior
+for bare-chat replies. Pending votes are reported instead of a premature map.
+
+`sm_nextmap` remains SourceMod's core ConVar, not a second registered command.
+Deploy the companion Kogasatopia `basetriggers.sp` without its old next-map
+handlers. Activate both together (BaseTriggers first, then Map Nominations), or
+restart the server, so the old provider cannot duplicate replies.
+
 ## Map catalog and nomination categories
 
 `configs/mapeval.cfg` is the shared primary source for nominations, random votes,
